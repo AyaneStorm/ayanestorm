@@ -49,16 +49,6 @@ void main()
         luminance = light == SKY_LIGHT_SUN_MIE ? result.mieSingle
                   : light == SKY_LIGHT_SUN     ? max(result.luminance - result.mieSingle * mieAlong, vec3(0.0))
                                                : result.luminance;
-        // TEMPORARY, Mac sky split: 8 the multiple scattering part alone, 9 the rest.
-        const uint debugView = uint(a.debugView + 0.5);
-        if (debugView == 8u && light != SKY_LIGHT_SUN_MIE)
-        {
-            luminance = result.multiOnly;
-        }
-        else if (debugView == 9u && light != SKY_LIGHT_SUN_MIE)
-        {
-            luminance = max(luminance - result.multiOnly, vec3(0.0));
-        }
     }
     imageStore(skyViewTarget, texel, vec4(luminance, 1.0));
 }

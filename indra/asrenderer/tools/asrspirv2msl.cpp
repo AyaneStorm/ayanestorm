@@ -132,7 +132,7 @@ int main(int argc, char** argv)
 
         // Fast math stays, SPIRV-Cross's fast:: functions included: precise:: cost 0.17 ms on
         // the M4's test scene and -fno-fast-math 2 ms more, for nothing seen. Shaders keep
-        // their own knife edges robust instead (raySphereIntersectNearest, the clamped azimuth).
+        // their own knife edges robust instead (the clamped azimuth in sampleSkyView).
         const std::string source = compiler.compile();
         std::ofstream out(argv[2], std::ios::binary);
         out << source;

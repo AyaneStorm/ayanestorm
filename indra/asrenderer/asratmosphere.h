@@ -140,8 +140,6 @@ struct SkyInput
     // glow against the default one's, so the default EEP keeps the physical peak alone.
     float sunGlowSize = 5.f;
     float sunGlowFocus = -0.48f;
-    uint32_t debugView = 0; // TEMPORARY, Mac sky split: ASRendererSkyDebug, one sky term at a time
-
     // EEP's 2D clouds: OpenGL's shapes (cloudsF.glsl) on OpenGL's dome mapping, lit by this sky.
     // The low tier, and the fallback when the volumetric layer is off. A cloud scale of 0, or no
     // texture, draws none.

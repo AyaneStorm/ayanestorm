@@ -99,7 +99,6 @@ bool sLookMoon = false; // --look-moon
 std::string sMoonMaps;  // --moon-maps DIR
 asr::ToneInput sTone;   // the sky's, as the viewer sets it (--sky starley)
 bool sLookHorizon = false; // --look-horizon: a wide view towards the moon
-uint32_t sSkyDebug = 0;    // --sky-debug N: as the viewer's ASRendererSkyDebug (TEMPORARY)
 bool sClouds = false;   // --clouds
 std::string sCloudMap;  // --cloud-map FILE
 float sAnisotropy = 16.f; // --anisotropy N: RenderAnisotropicLevel, 1 for none
@@ -3015,7 +3014,6 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
             state.sky = sSky;
             state.tone = sTone;
-            state.sky.debugView = sSkyDebug;
             state.anisotropy = sAnisotropy;
             state.audit = audit;
             if (sOverlays)
@@ -3368,10 +3366,6 @@ int main(int argc, char** argv)
         {
             sLookMoon = true;
             drawScene = true;
-        }
-        else if (arg == "--sky-debug" && i + 1 < argc)
-        {
-            sSkyDebug = uint32_t(std::atoi(argv[++i]));
         }
         else if (arg == "--look-horizon")
         {

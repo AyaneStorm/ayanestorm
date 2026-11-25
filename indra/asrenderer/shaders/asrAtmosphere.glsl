@@ -146,7 +146,6 @@ struct Atmosphere
     vec3 moonEarthshineColor;
     vec3 moonTint;
     vec2 sunGlow;
-    float debugView; // TEMPORARY, Mac sky split: ASRendererSkyDebug, in sunGlow's z
     uint cloudTexture;
     uint cloudTextureNext;
     float cloudBlend;
@@ -213,7 +212,6 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonEarthshineColor = ref.moonEarthshineColor.xyz;
     a.moonTint = ref.moonTint.xyz;
     a.sunGlow = ref.sunGlow.xy;
-    a.debugView = ref.sunGlow.z;
     a.cloudTexture = ref.cloudTexture;
     a.cloudTextureNext = ref.cloudTextureNext;
     a.cloudBlend = ref.cloudBlend;
@@ -272,27 +270,18 @@ float profileDensity(Atmosphere a, int profile, float height)
     return clamp(layer.x * exp(layer.y * height) + layer.z * height + layer.w, 0.0, 1.0);
 }
 
-// Distance to the nearest hit of a sphere at the origin ahead of the ray, or -1. direction
-// is unit length. Ray Tracing Gems ch. 7's form: b^2 - 4c subtracts two numbers near
-// (6360 km)^2 that differ by a few hundred, so a ray grazing the planet (a light on the
-// horizon) hit or missed by rounding alone, and Metal's FMA rounds otherwise than Vulkan:
-// half the sky went into the planet's shadow along the great circle 90 degrees from the sun.
-// Here the discriminant comes from the ray's closest point to the centre, and the roots from
-// the stable q form.
+// Distance to the nearest hit of a sphere at the origin ahead of the ray, or -1.
 float raySphereIntersectNearest(vec3 origin, vec3 direction, float radius)
 {
-    const float halfB = dot(direction, origin);
-    const float closest = length(origin - halfB * direction);
-    const float delta = (radius - closest) * (radius + closest);
+    const float b = 2.0 * dot(direction, origin);
+    const float c = dot(origin, origin) - radius * radius;
+    const float delta = b * b - 4.0 * c;
     if (delta < 0.0)
     {
         return -1.0;
     }
-    const float height = length(origin);
-    const float c = (height - radius) * (height + radius);
-    const float q = -(halfB + (halfB >= 0.0 ? sqrt(delta) : -sqrt(delta)));
-    const float sol0 = q;
-    const float sol1 = q != 0.0 ? c / q : 0.0; // q is 0 only for a tangent ray starting on the sphere: both roots 0
+    const float sol0 = (-b - sqrt(delta)) * 0.5;
+    const float sol1 = (-b + sqrt(delta)) * 0.5;
     if (sol0 < 0.0 && sol1 < 0.0)
     {
         return -1.0;
@@ -494,7 +483,6 @@ struct Scattering
     vec3 transmittance;
     vec3 multiScatterAs1;
     vec3 mieSingle; // the light's Mie single scattering with no phase: luminance holds it times the phase
-    vec3 multiOnly; // TEMPORARY, Mac sky split: the multiple scattering part of luminance
 };
 
 // The sample's IntegrateScatteredLuminance: marches the ray to the ground, the top of the
@@ -510,7 +498,6 @@ Scattering integrateScattering(Atmosphere a, vec3 position, vec3 direction, vec3
     result.transmittance = vec3(1.0);
     result.multiScatterAs1 = vec3(0.0);
     result.mieSingle = vec3(0.0);
-    result.multiOnly = vec3(0.0);
 
     const float tBottom = raySphereIntersectNearest(position, direction, a.bottomRadius);
     const float tTop = raySphereIntersectNearest(position, direction, a.topRadius);
@@ -588,8 +575,6 @@ Scattering integrateScattering(Atmosphere a, vec3 position, vec3 direction, vec3
         // The power series form: integrated over the step (Frostbite 2015, slide 28).
         result.multiScatterAs1 += throughput * (medium.scattering - medium.scattering * stepTransmittance) / extinction;
         luminance += throughput * (S - S * stepTransmittance) / extinction;
-        const vec3 multiS = multiscattered * medium.scattering;
-        result.multiOnly += throughput * (multiS - multiS * stepTransmittance) / extinction;
         const vec3 mieS = earthShadow * transmittanceToSun * medium.scatteringMie;
         result.mieSingle += throughput * (mieS - mieS * stepTransmittance) / extinction;
         throughput *= stepTransmittance;

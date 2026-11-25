@@ -12028,17 +12028,6 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>60</integer>
   </map>
-  <key>ASRendererSkyDebug</key>
-  <map>
-    <key>Comment</key>
-    <string>TEMPORARY, new renderer sky diagnosis: 0 normal, 1 the sun's table alone, 2 the sun's Mie table with its phase and glow, 3 the moon's table (x1000), 4 the three sky-view tables over the screen, 5 the transmittance, 6 the sun lookup's numbers (r u, g azimuth cosine, b zenith cosine), 7 the multiple scattering table over the screen (sun zenith cosine -1 to 1 across, height down).</string>
-    <key>Persist</key>
-    <integer>0</integer>
-    <key>Type</key>
-    <string>U32</string>
-    <key>Value</key>
-    <integer>0</integer>
-  </map>
   <key>ASRendererLocalShift</key>
   <map>
     <key>Comment</key>

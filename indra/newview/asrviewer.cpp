@@ -316,77 +316,6 @@ void fillClouds(asr::SkyInput& sky, const LLSettingsSky& current)
     sky.cloudShadowOffset[1] = lightnorm.mV[2] * 0.0125f;
 }
 
-// TEMPORARY, Mac half sky diagnosis: logs the sky the renderer gets once per EEP name, so
-// asrenderer_test can rebuild it. Remove once that sky is a test sky.
-void logSkyOnChange(const asr::SkyInput& sky, const asr::ToneInput& tone, const std::string& name)
-{
-    static std::string sLogged;
-    if (name == sLogged)
-    {
-        return;
-    }
-    sLogged = name;
-    std::ostringstream out;
-    out.precision(9);
-    auto put = [&out](const char* field, const float* v, int n)
-    {
-        out << "\n  " << field;
-        for (int i = 0; i < n; ++i)
-        {
-            out << ' ' << v[i];
-        }
-    };
-    auto profile = [&put](const char* field, const asr::AtmosphereProfile& p)
-    {
-        put(field, &p.layers[0].width, 10); // two layers of five floats
-    };
-    put("bottomTopRadius", &sky.bottomRadius, 2);
-    profile("rayleigh", sky.rayleigh);
-    profile("mie", sky.mie);
-    profile("absorption", sky.absorption);
-    put("rayleighScattering", sky.rayleighScattering, 3);
-    put("mieScattering", sky.mieScattering, 3);
-    put("mieExtinction", sky.mieExtinction, 3);
-    put("absorptionExtinction", sky.absorptionExtinction, 3);
-    put("mieG", &sky.mieG, 1);
-    put("groundAlbedo", sky.groundAlbedo, 3);
-    put("multipleScattering", &sky.multipleScattering, 1);
-    put("sunDirection", sky.sunDirection, 3);
-    put("sunAngularRadius", &sky.sunAngularRadius, 1);
-    put("sunIlluminance", sky.sunIlluminance, 3);
-    put("seaLevel", &sky.seaLevel, 1);
-    put("sunTextureRadius", &sky.sunTextureRadius, 1);
-    put("sunUp", sky.sunUp, 3);
-    put("moonDirection", sky.moonDirection, 3);
-    put("moonUp", sky.moonUp, 3);
-    put("moonAngularRadius", &sky.moonAngularRadius, 1);
-    put("moonIlluminance", sky.moonIlluminance, 3);
-    put("moonBrightness", &sky.moonBrightness, 1);
-    put("moonPhase", &sky.moonPhase, 1);
-    put("moonPhaseTilt", &sky.moonPhaseTilt, 1);
-    put("moonTerminatorSoftness", &sky.moonTerminatorSoftness, 1);
-    put("moonEarthshine", &sky.moonEarthshine, 1);
-    put("moonHeightRange", &sky.moonHeightRange, 1);
-    put("moonRelief", &sky.moonRelief, 1);
-    put("moonHalo", &sky.moonHaloStrength, 3); // strength, radius, softness
-    put("moonTint", sky.moonTint, 3);
-    put("sunGlowSizeFocus", &sky.sunGlowSize, 2);
-    put("cloudBlendScaleVarianceShadow", &sky.cloudBlend, 4);
-    put("cloudPosDensity1", sky.cloudPosDensity1, 3);
-    put("cloudPosDensity2", sky.cloudPosDensity2, 3);
-    put("cloudColor", sky.cloudColor, 3);
-    put("cloudMaxYRadiusOffsetHeight", &sky.cloudMaxY, 4);
-    put("starRotation", sky.starRotation, 9);
-    put("starBrightnessTwinklePhase", &sky.starBrightness, 3);
-    put("milkyWayDeepSkySaturation", &sky.milkyWayIntensity, 3);
-    out << "\n  textures sun " << (sky.sunTexture != asr::NO_SKY_TEXTURE) << " moon " << (sky.moonTexture != asr::NO_SKY_TEXTURE)
-        << " moonSphere " << sky.moonSphere << " moonNormal " << (sky.moonNormalTexture != asr::NO_SKY_TEXTURE)
-        << " cloud " << (sky.cloudTexture != asr::NO_SKY_TEXTURE) << " stars " << (sky.stars ? sky.stars->size() : 0)
-        << " milkyWay " << (sky.milkyWayTexture != asr::NO_SKY_TEXTURE);
-    out << "\n  tone exposure " << tone.exposure << " mix " << tone.mix << " mapper " << tone.mapper;
-    LL_INFOS("ASRenderer") << "Sky '" << name << "':" << out.str() << LL_ENDL;
-}
-
 void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
 {
     sky = asr::earthSky();
@@ -401,8 +330,6 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     static LLCachedControl<bool> autoAdjustLegacy(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
     tone.exposure = llclamp(F32(exposure()), 0.5f, 4.f); // GL's range
     tone.mapper = llmin(U32(mapper()), asr::TONE_MAPPER_AGX);
-    static LLCachedControl<U32> skyDebug(gSavedSettings, "ASRendererSkyDebug", 0U); // TEMPORARY, Mac sky split
-    sky.debugView = skyDebug();
 
     const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky(); // inside worldReady()
     if (!current)
@@ -455,7 +382,6 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     fillStars(sky, *current); // first: the moon takes its orientation from the stars' frame
     fillMoon(sky, *current);
     fillClouds(sky, *current);
-    logSkyOnChange(sky, tone, current->getName()); // TEMPORARY: Mac half sky diagnosis
 }
 
 constexpr char STALL_SETTING[] = "ASRendererStallTestAt";
