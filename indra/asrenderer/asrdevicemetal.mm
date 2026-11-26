@@ -922,8 +922,9 @@ private:
     // A volume when depth is above 1.
     id<MTLTexture> createSkyTable(uint32_t width, uint32_t height, const char* what, uint32_t depth = 1)
     {
-        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, uint64_t(width) * height * depth * 8);
-        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:width height:height mipmapped:NO];
+        // Full floats: deep twilight and night fall far below what half floats keep (as Vulkan's createSky).
+        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, uint64_t(width) * height * depth * 16);
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Float width:width height:height mipmapped:NO];
         if (depth > 1)
         {
             descriptor.textureType = MTLTextureType3D;
@@ -941,6 +942,11 @@ private:
 
     bool createSky(const std::string& shaderDir, std::string& error)
     {
+        if (![mDevice supports32BitFloatFiltering])
+        {
+            error = "the sky needs linear filtering of 32-bit float textures, which this GPU lacks";
+            return false;
+        }
         mSky.transmittance = createSkyTable(TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT, "transmittance table");
         mSky.multiscatter = createSkyTable(MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE, "multiple scattering table");
         mSky.skyView = createSkyTable(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT, "sky view table");

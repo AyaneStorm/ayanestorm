@@ -18,13 +18,6 @@ layout(local_size_x = 64) in;
 layout(set = 0, binding = 1) uniform sampler samplers[4];
 #include "asrAtmosphere.glsl"
 
-// The least illuminance the exposure follows, in the sky's units (the sun's illuminance
-// at 1 gives about 1 at noon): darker skies stay darker on screen, as night should.
-const float ILLUMINANCE_FLOOR = 0.01;
-// The night (see the end of main): how much further the dark-adapted eye opens, and the
-// faint light of airglow and stars that is left on a moonless night, in the same units.
-const float NIGHT_ADAPTATION = 3.2;
-const float AIRGLOW = 7.5e-4;
 const uint SAMPLES_PER_THREAD = 16u; // 1024 directions in all, on a 32 by 32 grid
 // The most the sky's mean luminance may be after exposure, before tone mapping.
 const float SKY_KEY = 0.5;
@@ -81,7 +74,15 @@ void main()
     // exposure so much at low sun that the sun, its bloom and whatever faces it peaked
     // near 9 degrees; at noon the two read alike. The sky stays read by the card.
     const float sunIlluminance = dot(a.sunIlluminance * transmittance, LUMINANCE) * max(0.5 + 0.5 * a.sunDirection.z, 0.0);
-    const float illuminance = max(skyIlluminance + sunIlluminance, ILLUMINANCE_FLOOR);
+    // The moon's direct light, through the air and setting over its disc, metered as the sun's.
+    const vec3 moonThroughAir = lightThroughAir(a, position, a.moonDirection, a.moonAngularRadius);
+    const float moonIlluminance = dot(a.moonSkyLight * moonThroughAir, LUMINANCE) * max(0.5 + 0.5 * a.moonDirection.z, 0.0);
+    // All the light there is, down to the airglow the sky always holds: no floor, so the eye
+    // keeps adapting as twilight fades (user, 26 November 2026: from sun -18 degrees the horizon
+    // slowly lifts out of the dark, blue, then warmer from -9). A fixed floor here stopped the
+    // adaptation near -6 degrees while twilight dimmed about 30 times per 3 degrees, so the
+    // twilight's blue never showed and the sky lit up in one step near -3.
+    const float illuminance = max(skyIlluminance + sunIlluminance + moonIlluminance, 1e-9);
     ExposureRef result = ExposureRef(view.exposure);
     // Partial adaptation, as the eye's: against the sun's own illuminance above the air (a
     // noon of this EEP), the exposure follows the light by exposureAdaptation only, so the
@@ -89,28 +90,12 @@ void main()
     // brought every hour to noon's brightness, and the guard below then dipped the scene
     // where the haze glows around a sun on the horizon (measured in asrenderer_test --sky
     // haze --sun-elevation: 83 at -3 degrees, 54 at +1.5, 83 at +6; now 35, 41, 59).
-    const float noon = max(dot(a.sunIlluminance, LUMINANCE), ILLUMINANCE_FLOOR);
+    const float noon = max(dot(a.sunIlluminance, LUMINANCE), 1e-9);
     const float adaptation = clamp(view.exposureAdaptation, 0.0, 1.0);
     const float adapted = ATMOSPHERE_PI / illuminance * pow(min(illuminance / noon, 1.0), 1.0 - adaptation);
 
-    // The night, as the eye sees it (user: a natural dark, lit by what light there is). From
-    // sun elevation +3 to -9 degrees (user, 26 November 2026: it was -9 to -18, too late), the
-    // eye opens NIGHT_ADAPTATION times further, and surfaces take the real light: the moon's,
-    // through the air and setting over its disc, over a faint airglow and starlight that never
-    // lets a night go fully black. Above +3 degrees both weigh nothing. Tuned with the old
-    // -9 to -18 range on asrenderer_test --sky night --sun-elevation -18 with the viewer's moon
-    // (3e-3, gibbous), buildings against 77 at noon: moonless 12 (15%), moon at 14 degrees 18,
-    // 45 degrees 28, 75 degrees 32 (40%).
-    const float sunElevation = degrees(asin(clamp(a.sunDirection.z, -1.0, 1.0)));
-    const float t = clamp((3.0 - sunElevation) / 12.0, 0.0, 1.0);
-    const float night = t * t * (3.0 - 2.0 * t);
-    const vec3 moonThroughAir = lightThroughAir(a, position, a.moonDirection, a.moonAngularRadius);
-    const float moonIlluminance = dot(a.moonSkyLight * moonThroughAir, LUMINANCE) * max(0.5 + 0.5 * a.moonDirection.z, 0.0);
-    const float nightFloor = exp(mix(log(ILLUMINANCE_FLOOR), log(AIRGLOW), night));
-    const float lit = max(skyIlluminance + sunIlluminance + night * moonIlluminance, nightFloor);
-
-    // The guard only lowers: at night the floor above still decides.
-    result.exposure = min(adapted * exp(night * log(NIGHT_ADAPTATION)), SKY_KEY / max(skyMean, 1e-9));
-    result.illuminance = lit;
+    // The guard only lowers.
+    result.exposure = min(adapted, SKY_KEY / max(skyMean, 1e-9));
+    result.illuminance = illuminance;
     result.skyIrradiance = skyIrradiance;
 }

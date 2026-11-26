@@ -455,16 +455,31 @@ float eepGlow(vec2 glow, float cosTheta)
     return min(pow(max(1.0 - cosTheta, 0.001) * glow.x, glow.y), 100000.0) + 0.25;
 }
 
-// The sky seen from the camera in a world direction, sun and moon at their own brightness.
-// The sun's Mie single scattering takes its phase here, per pixel, so its peak is as sharp
-// as the screen and not the table, times this EEP's glow against the default EEP's.
+// The night sky's own faint light, airglow and starlight, in the sky's units (user: a night
+// is never fully black). Zenith radiance, tinted towards blue as the dark-adapted eye sees
+// it (luminance 1). The airglow layer is seen through more of its depth towards the horizon
+// (van Rhijn), about 3 times the zenith's there once its extinction is folded in.
+const float AIRGLOW_RADIANCE = 2.5e-9;
+const vec3 AIRGLOW_COLOR = vec3(0.5, 0.75, 1.4) / 0.7436;
+
+vec3 airglow(vec3 direction)
+{
+    const float z = max(direction.z, 0.0);
+    return AIRGLOW_COLOR * (AIRGLOW_RADIANCE * inversesqrt(1.0 - 0.9 * (1.0 - z * z)));
+}
+
+// The sky seen from the camera in a world direction, sun and moon at their own brightness,
+// over the airglow. The sun's Mie single scattering takes its phase here, per pixel, so its
+// peak is as sharp as the screen and not the table, times this EEP's glow against the
+// default EEP's.
 vec3 skyRadiance(Atmosphere a, vec3 direction)
 {
     const float sunCos = dot(direction, a.sunDirection);
     const float glow = eepGlow(a.sunGlow, sunCos) / eepGlow(vec2(5.0, -0.48), sunCos);
     const vec3 sun = sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN)
                      + sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN_MIE) * (miePhase(a.mieG, -sunCos) * glow);
-    return sun * a.sunIlluminance + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight;
+    return sun * a.sunIlluminance + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight
+         + airglow(direction);
 }
 
 struct Medium

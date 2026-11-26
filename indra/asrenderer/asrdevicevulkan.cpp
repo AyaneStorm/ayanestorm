@@ -75,7 +75,8 @@ constexpr VkFormat VISIBILITY_FORMAT = VK_FORMAT_R32_UINT;
 constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
-constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour; alpha is glow
+constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour, pre-exposed; alpha is glow
+constexpr VkFormat SKY_TABLE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT; // see createSky
 constexpr uint32_t SCENE_IMAGE_BINDINGS = 20; // set 1, see createScene()
 constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
 constexpr uint32_t SCENE_SAMPLED_BINDINGS = 5; // the depth and the sky's four tables
@@ -1685,13 +1686,22 @@ private:
 
     bool createSky(std::string& error)
     {
+        // The sky's tables hold light per unit of sunlight; deep twilight and night fall far
+        // below what half floats keep (about 6e-8), so they are full floats, about 2 MB in all.
+        VkFormatProperties tableFeatures{};
+        vkGetPhysicalDeviceFormatProperties(mGpu,SKY_TABLE_FORMAT, &tableFeatures);
+        if ((tableFeatures.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) == 0)
+        {
+            error = "the sky needs linear filtering of 32-bit float textures, which this GPU lacks";
+            return false;
+        }
         const VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        if (!createTarget(mSky.transmittance, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "transmittance table",
+        if (!createTarget(mSky.transmittance, SKY_TABLE_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 16, "transmittance table",
                           { TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT }) ||
-            !createTarget(mSky.multiscatter, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "multiple scattering table",
+            !createTarget(mSky.multiscatter, SKY_TABLE_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 16, "multiple scattering table",
                           { MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE }) ||
-            !createTarget(mSky.skyView, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "sky view table", { SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT }) ||
-            !createTarget(mSky.aerial, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "aerial perspective volume", { AERIAL_LUT_SIZE, AERIAL_LUT_SIZE },
+            !createTarget(mSky.skyView, SKY_TABLE_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 16, "sky view table", { SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT }) ||
+            !createTarget(mSky.aerial, SKY_TABLE_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 16, "aerial perspective volume", { AERIAL_LUT_SIZE, AERIAL_LUT_SIZE },
                           AERIAL_LUT_SIZE) ||
             !createBufferObject(mSky.exposure, sizeof(GpuExposure), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "exposure", MemoryCategory::RenderTargets, true))
         {

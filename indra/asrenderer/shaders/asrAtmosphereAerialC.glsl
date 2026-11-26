@@ -15,7 +15,7 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 1) uniform sampler samplers[4];
-layout(set = 1, binding = 14, rgba16f) uniform writeonly image3D aerialTarget;
+layout(set = 1, binding = 14, rgba32f) uniform writeonly image3D aerialTarget;
 #include "asrAtmosphere.glsl"
 
 const float STEPS_PER_SLICE = 2.0;

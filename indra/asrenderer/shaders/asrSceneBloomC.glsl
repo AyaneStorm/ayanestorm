@@ -103,7 +103,7 @@ void main()
     ViewRef view = ViewRef(push.view);
     sSceneSize = ivec2(view.pixelSize);
     sLevel = push.phase & (BLOOM_UP - 1u);
-    sExposure = ExposureRef(view.exposure).exposure * view.userExposure;
+    sExposure = view.userExposure; // scene colour is pre-exposed by the sky's exposure
     const ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
     const ivec2 group = ivec2(gl_WorkGroupID.xy) * 8;
     const int local = int(gl_LocalInvocationIndex);

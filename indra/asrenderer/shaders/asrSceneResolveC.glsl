@@ -537,7 +537,9 @@ void main()
         imageStore(normals, pixel, vec4(0.0));
         const vec2 ndc = (vec2(pixel) + 0.5) * (2.0 / view.pixelSize.xy) - 1.0;
         const float pixelAngle = 2.0 / (view.pixelSize.x * view.projection.x);
-        imageStore(lit, pixel, vec4(background(pixel, loadAtmosphere(view.atmosphere), viewDirection(view, ndc), pixelAngle), 0.0));
+        // Pre-exposed: night light falls far below what the half-float target keeps.
+        const vec3 sky = background(pixel, loadAtmosphere(view.atmosphere), viewDirection(view, ndc), pixelAngle);
+        imageStore(lit, pixel, vec4(sky * ExposureRef(view.exposure).exposure, 0.0));
         return;
     }
 
@@ -687,5 +689,6 @@ void main()
         hash ^= hash >> 22u;
         shown = vec4(vec3(hash & 255u, (hash >> 8) & 255u, (hash >> 16) & 255u) / 255.0, 1.0);
     }
-    imageStore(lit, pixel, shown);
+    // Pre-exposed, as the sky above.
+    imageStore(lit, pixel, vec4(shown.rgb * ExposureRef(view.exposure).exposure, shown.a));
 }

@@ -12,7 +12,7 @@
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 64) in;
 
 layout(set = 0, binding = 1) uniform sampler samplers[4];
-layout(set = 1, binding = 12, rgba16f) uniform writeonly image2D multiscatterTarget;
+layout(set = 1, binding = 12, rgba32f) uniform writeonly image2D multiscatterTarget;
 #include "asrAtmosphere.glsl"
 
 shared vec3 sharedMultiScatterAs1[64];

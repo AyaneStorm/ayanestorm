@@ -12,7 +12,7 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 1) uniform sampler samplers[4];
-layout(set = 1, binding = 11, rgba16f) uniform writeonly image2D transmittanceTarget;
+layout(set = 1, binding = 11, rgba32f) uniform writeonly image2D transmittanceTarget;
 #include "asrAtmosphere.glsl"
 
 const float STEPS = 40.0;

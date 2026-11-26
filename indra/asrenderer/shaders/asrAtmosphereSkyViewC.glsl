@@ -15,7 +15,7 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 1) uniform sampler samplers[4];
-layout(set = 1, binding = 13, rgba16f) uniform writeonly image2D skyViewTarget;
+layout(set = 1, binding = 13, rgba32f) uniform writeonly image2D skyViewTarget;
 #include "asrAtmosphere.glsl"
 
 void main()

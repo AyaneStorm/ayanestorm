@@ -95,7 +95,8 @@ void main()
         const vec3 spread = bloomBilinear(ivec2(0), bloomLevelSize(scene, 0u), (vec2(pixel) + 0.5) * 0.5);
         color = color * (1.0 - view.bloomStrength) + spread * (1.0 / float(BLOOM_LEVELS));
     }
-    const vec3 exposed = max(color, vec3(0.0)) * (ExposureRef(view.exposure).exposure * view.userExposure);
+    // Scene colour is pre-exposed by the sky's exposure where it is drawn; RenderExposure on top.
+    const vec3 exposed = max(color, vec3(0.0)) * view.userExposure;
     vec3 mapped = exposed;
     if (view.toneMapper == TONE_MAPPER_PBR_NEUTRAL)
     {
