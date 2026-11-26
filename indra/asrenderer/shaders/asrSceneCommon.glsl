@@ -200,6 +200,9 @@ const uint MATERIAL_FLAG_NORMAL_MAP = 1u;
 const uint MATERIAL_FLAG_SPECULAR_MAP = 2u;
 const uint MATERIAL_FLAG_FULLBRIGHT = 4u;
 const uint MATERIAL_FLAG_EMISSIVE_ALPHA = 8u;
+const uint MATERIAL_FLAG_BUMP_IMAGE = 16u;
+const uint MATERIAL_FLAG_BUMP_BRIGHTNESS = 32u;
+const uint MATERIAL_FLAG_BUMP_DARKNESS = 64u;
 
 const uint MATERIAL_FACE_UV = 0u;
 const uint MATERIAL_PLANAR = 1u;
@@ -337,6 +340,8 @@ const uint DEBUG_VIEW_ALBEDO = 2u;
 const uint DEBUG_VIEW_ALPHA_MODE = 3u;
 const uint DEBUG_VIEW_CLUSTERS = 4u;
 const uint DEBUG_VIEW_NO_OCCLUSION = 5u;
+const uint DEBUG_VIEW_NO_ENVIRONMENT = 6u; // legacy shading without its environment terms
+const uint DEBUG_VIEW_NO_HIGHLIGHT = 7u;   // legacy shading without sun and moon highlights
 
 // The sphere touches the view frustum and is nearer than the far clip.
 bool insideView(ViewRef view, vec3 center, float radius)

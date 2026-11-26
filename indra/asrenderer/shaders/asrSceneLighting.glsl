@@ -63,6 +63,9 @@ vec3 environmentSky(Atmosphere a, vec3 direction)
 vec3 shadeLegacy(Atmosphere a, LegacySurface s, vec3 toCamera)
 {
     ExposureRef e = ExposureRef(ViewRef(push.view).exposure);
+    const uint debugView = ViewRef(push.view).debugView;
+    const bool highlights = debugView != DEBUG_VIEW_NO_HIGHLIGHT;
+    const bool environment = debugView != DEBUG_VIEW_NO_ENVIRONMENT;
     const vec3 base = srgbToLinear(s.diffuse.rgb);
     vec3 color = base * surfaceIrradiance(s.normal) * (1.0 / ATMOSPHERE_PI);
 
@@ -70,10 +73,13 @@ vec3 shadeLegacy(Atmosphere a, LegacySurface s, vec3 toCamera)
     // The environment looking along the reflection: the sky above, the ground's bounce below
     // (the ambient's own lower half), and over to the ambient as glossiness drops.
     vec3 sharp = reflected.z > 0.0 ? environmentSky(a, reflected) : surfaceIrradiance(reflected) * (1.0 / ATMOSPHERE_PI);
-    if (s.glossiness > 0.0)
+    if (s.glossiness > 0.0 && highlights)
     {
         color += legacyHighlight(s, toCamera, e.sunDirection, e.sunLight);
         color += legacyHighlight(s, toCamera, e.moonDirection, e.moonLight);
+    }
+    if (s.glossiness > 0.0 && environment)
+    {
         // applyGlossEnv(): the glossy environment, its fake energy conservation measured on
         // the exposed colour, as OpenGL's colours are near display values.
         const vec3 glossy = mix(surfaceIrradiance(reflected) * (1.0 / ATMOSPHERE_PI), sharp, s.glossiness);
@@ -87,7 +93,7 @@ vec3 shadeLegacy(Atmosphere a, LegacySurface s, vec3 toCamera)
     // any light: so before exposure, over it.
     color = mix(color, base / max(e.exposure, 1e-20), s.emissive);
 
-    if (s.envIntensity > 0.0)
+    if (s.envIntensity > 0.0 && environment)
     {
         // applyLegacyEnv().
         float fresnel = 1.0 - dot(toCamera, s.normal);
@@ -95,6 +101,40 @@ vec3 shadeLegacy(Atmosphere a, LegacySurface s, vec3 toCamera)
         color = mix(color, sharp * (s.envIntensity * fresnel) * 0.5, s.envIntensity);
     }
     return color;
+}
+
+// LL's brightness and darkness bumps: OpenGL makes a mipmapped normal map from the colour
+// texture's luminance (normgenF.glsl, RenderNormalMapScale 64). Here the same normal is worked
+// out where it is shaded, from the texture the face already shows: no texture per bumped image.
+// The heights come from the mip being sampled, their steps scaled back to full-size texels, so a
+// far face keeps OpenGL's slopes as its mipmapped map would. Returns the map's value (0 to 1).
+const float LEGACY_BUMP_NORMAL_SCALE = 64.0;
+
+float legacyBumpHeight(uint slot, uint samplerIndex, vec2 uv, float lod, bool darkness)
+{
+    const vec3 c = textureLod(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]), uv, lod).rgb;
+    const float l = dot(c, vec3(0.2995, 0.5875, 0.1145));
+    return darkness ? 1.0 - l : l;
+}
+
+vec3 legacyBumpNormal(uint bits, vec2 uv, vec2 uvDx, vec2 uvDy, bool darkness)
+{
+    const uint slot = bits & 0xFFFFFu;
+    const uint samplerIndex = (bits >> 28) & 3u;
+    const vec2 size = vec2(textureSize(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]), 0));
+    const float footprint = max(length(uvDx * size), length(uvDy * size));
+    const float lod = max(log2(max(footprint, 1e-6)), 0.0);
+    const float texels = exp2(floor(lod)); // full-size texels per texel of the level read
+    const vec2 step = texels / size;
+    const float c = legacyBumpHeight(slot, samplerIndex, uv, lod, darkness);
+    // normgenF.glsl: luminance steps times 512 over one full-size texel.
+    const float scaler = 512.0 / texels;
+    const float s = LEGACY_BUMP_NORMAL_SCALE;
+    const vec3 right = vec3(s, 0.0, (legacyBumpHeight(slot, samplerIndex, uv + vec2(step.x, 0.0), lod, darkness) - c) * scaler);
+    const vec3 left = vec3(-s, 0.0, (legacyBumpHeight(slot, samplerIndex, uv - vec2(step.x, 0.0), lod, darkness) - c) * scaler);
+    const vec3 up = vec3(0.0, -s, (legacyBumpHeight(slot, samplerIndex, uv - vec2(0.0, step.y), lod, darkness) - c) * scaler);
+    const vec3 down = vec3(0.0, s, (legacyBumpHeight(slot, samplerIndex, uv + vec2(0.0, step.y), lod, darkness) - c) * scaler);
+    return normalize(cross(right, down) + cross(down, left) + cross(left, up) + cross(up, right)) * 0.5 + 0.5;
 }
 
 // A material's tangent-space normal map turned into the world. `tangent` is the world

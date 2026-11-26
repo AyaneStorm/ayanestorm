@@ -433,6 +433,15 @@ constexpr uint32_t MATERIAL_FLAG_NORMAL_MAP = 1;
 constexpr uint32_t MATERIAL_FLAG_SPECULAR_MAP = 2;
 constexpr uint32_t MATERIAL_FLAG_FULLBRIGHT = 4;     // shown as its colour, unlit
 constexpr uint32_t MATERIAL_FLAG_EMISSIVE_ALPHA = 8; // legacy: the diffuse alpha is an emissive mask
+constexpr uint32_t MATERIAL_FLAG_BUMP_IMAGE = 16;     // the normal map is an LL built-in bump image: its alpha is not glossiness
+constexpr uint32_t MATERIAL_FLAG_BUMP_BRIGHTNESS = 32; // LL's brightness bump: a normal map from the colour texture's luminance
+constexpr uint32_t MATERIAL_FLAG_BUMP_DARKNESS = 64;   // the same, from its inverse
+
+// MaterialDesc::legacyBump: LL's built-in bump maps (the edit window's Bumpiness).
+constexpr uint32_t LEGACY_BUMP_NONE = 0;
+constexpr uint32_t LEGACY_BUMP_IMAGE = 1;      // a standard bump image, in maps[MATERIAL_MAP_NORMAL]
+constexpr uint32_t LEGACY_BUMP_BRIGHTNESS = 2; // from the colour texture, made in the shader
+constexpr uint32_t LEGACY_BUMP_DARKNESS = 3;
 
 constexpr uint32_t MATERIAL_FACE_UV = 0; // the face's own UVs
 constexpr uint32_t MATERIAL_PLANAR = 1;  // from position and normal, as the viewer's planar mapping
@@ -674,6 +683,7 @@ constexpr uint32_t DEBUG_VIEW_ALBEDO = 2;     // the surface colour, no light
 constexpr uint32_t DEBUG_VIEW_ALPHA_MODE = 3; // grey opaque, green cut-out, red blended
 constexpr uint32_t DEBUG_VIEW_CLUSTERS = 4;   // one colour per drawn cluster
 constexpr uint32_t DEBUG_VIEW_NO_OCCLUSION = 5; // shaded, with occlusion culling off
+// 6 and 7 are shader-only: see asrSceneCommon.glsl.
 
 // A look-at camera with reversed depth and no far plane. World space is the viewer's:
 // right-handed, Z up. Y comes out flipped, as Vulkan wants it, and asr_spirv2msl turns
@@ -928,6 +938,7 @@ struct MaterialDesc
     float envIntensity = 0.f;
     bool fullbright = false;
     bool emissiveAlpha = false; // legacy DIFFUSE_ALPHA_MODE_EMISSIVE
+    uint32_t legacyBump = LEGACY_BUMP_NONE;
 };
 
 struct TerrainLayerDesc

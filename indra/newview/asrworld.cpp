@@ -43,6 +43,7 @@
 #include "asrviewer.h"
 #include "llagent.h"
 #include "llagentcamera.h"
+#include "lldrawpoolbump.h"
 #include "fsavatarrenderpersistence.h"
 #include "llviewerobjectlist.h"
 #include "llappviewer.h"
@@ -239,7 +240,7 @@ struct MaterialKey
 {
     F32 values[40];
     U32 planar;
-    U32 lighting; // fullbright | emissive alpha << 1
+    U32 lighting; // fullbright | emissive alpha << 1 | legacy bump << 2
     const LLViewerTexture* image;
     const LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS];
     asr::TextureAnimDesc anim;
@@ -962,7 +963,7 @@ MaterialKey materialKey(const asr::MaterialDesc& desc, const LLViewerTexture* im
     add(&desc.envIntensity, 1);
     llassert(value == key.values + LL_ARRAY_SIZE(key.values));
     key.planar = desc.planar ? 1 : 0;
-    key.lighting = (desc.fullbright ? 1 : 0) | (desc.emissiveAlpha ? 2 : 0);
+    key.lighting = (desc.fullbright ? 1 : 0) | (desc.emissiveAlpha ? 2 : 0) | (desc.legacyBump << 2);
     key.image = image;
     for (U32 i = 0; i < asr::MATERIAL_EXTRA_MAPS; ++i)
     {
@@ -1348,6 +1349,29 @@ void fillLegacyLighting(asr::MaterialDesc& material, LLViewerTexture* maps[asr::
             material.specular[3] = params->getSpecularLightExponent() / 255.f;
             material.envIntensity = params->getEnvironmentIntensity() / 255.f;
         }
+    }
+
+    // LL's built-in bump maps, where no material normal map replaces them (LLVolumeGeometryManager::
+    // registerFace(): use_legacy_bump), read with the colour's UVs as bumpF.glsl reads them.
+    // Brightness and darkness come from the colour texture, worked out in the shader; the
+    // standard ones are images the viewer turned into normal maps when they loaded.
+    const U8 bump = te->getBumpmap();
+    if (bump == 0 || bump >= 18 || (params.notNull() && params->getNormalID().notNull()))
+    {
+        return;
+    }
+    if (bump == BE_BRIGHTNESS || bump == BE_DARKNESS)
+    {
+        material.legacyBump = bump == BE_BRIGHTNESS ? asr::LEGACY_BUMP_BRIGHTNESS : asr::LEGACY_BUMP_DARKNESS;
+        return;
+    }
+    if (bump < LLStandardBumpmap::sStandardBumpmapCount && gStandardBumpmapList[bump].mImage.notNull())
+    {
+        material.legacyBump = asr::LEGACY_BUMP_IMAGE;
+        maps[asr::MATERIAL_MAP_NORMAL] = gStandardBumpmapList[bump].mImage.get();
+        asr::MaterialDesc::Map& map = material.maps[asr::MATERIAL_MAP_NORMAL];
+        memcpy(map.uvRow0, material.uvRow0, sizeof(map.uvRow0));
+        memcpy(map.uvRow1, material.uvRow1, sizeof(map.uvRow1));
     }
 }
 

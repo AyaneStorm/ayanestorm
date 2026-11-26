@@ -215,7 +215,13 @@ void main()
     if ((material.flags & MATERIAL_FLAG_NORMAL_MAP) != 0u)
     {
         normalSample = sampleMap(material.maps[MATERIAL_MAP_NORMAL], faceDx, faceDy);
+        normalSample.a = (material.flags & MATERIAL_FLAG_BUMP_IMAGE) != 0u ? 1.0 : normalSample.a; // a bump image's alpha is height
         normal = applyNormalMap(normal, vary_tangent.xyz, vary_tangent.w, normalSample.xyz * 2.0 - 1.0);
+    }
+    else if ((material.flags & (MATERIAL_FLAG_BUMP_BRIGHTNESS | MATERIAL_FLAG_BUMP_DARKNESS)) != 0u)
+    {
+        const vec3 bump = legacyBumpNormal(vary_texture, vary_uv, uvDx, uvDy, (material.flags & MATERIAL_FLAG_BUMP_DARKNESS) != 0u);
+        normal = applyNormalMap(normal, vary_tangent.xyz, vary_tangent.w, bump * 2.0 - 1.0);
     }
     if ((material.flags & MATERIAL_FLAG_SPECULAR_MAP) != 0u)
     {

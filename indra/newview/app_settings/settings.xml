@@ -11965,7 +11965,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASRendererDebugView</key>
   <map>
     <key>Comment</key>
-    <string>Development only: what the new renderer shows instead of the shaded scene. 0 shaded, 1 normals as colours, 2 surface colour with no light, 3 how faces are drawn (grey opaque, green cut-out, red blended), 4 one colour per drawn cluster, 5 shaded with occlusion culling off.</string>
+    <string>Development only: what the new renderer shows instead of the shaded scene. 0 shaded, 1 normals as colours, 2 surface colour with no light, 3 how faces are drawn (grey opaque, green cut-out, red blended), 4 one colour per drawn cluster, 5 shaded with occlusion culling off, 6 shaded without environment reflections, 7 shaded without sun and moon highlights.</string>
     <key>Persist</key>
     <integer>0</integer>
     <key>Type</key>

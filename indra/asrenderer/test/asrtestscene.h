@@ -373,7 +373,9 @@ public:
                     material.envIntensity = 0.5f; // shiny 2
                     break;
                 case 3:
+                    // Fullbright once, then LL's brightness and darkness bumps from the checker.
                     material.fullbright = i == 3;
+                    material.legacyBump = i == 3 ? asr::LEGACY_BUMP_NONE : i % 8 == 7 ? asr::LEGACY_BUMP_BRIGHTNESS : asr::LEGACY_BUMP_DARKNESS;
                     break;
                 default:
                     break;

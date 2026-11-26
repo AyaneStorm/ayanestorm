@@ -691,6 +691,12 @@ void main()
         if ((material.flags & MATERIAL_FLAG_NORMAL_MAP) != 0u)
         {
             normalSample = sampleMap(pixel, material.maps[MATERIAL_MAP_NORMAL], faceUV, faceDx, faceDy);
+            // A built-in bump image's alpha is its height, not glossiness (bumpF.glsl ignores it).
+            normalSample.a = (material.flags & MATERIAL_FLAG_BUMP_IMAGE) != 0u ? 1.0 : normalSample.a;
+        }
+        else if ((material.flags & (MATERIAL_FLAG_BUMP_BRIGHTNESS | MATERIAL_FLAG_BUMP_DARKNESS)) != 0u)
+        {
+            normalSample = vec4(legacyBumpNormal(material.texture, uv, uvDx, uvDy, (material.flags & MATERIAL_FLAG_BUMP_DARKNESS) != 0u), 1.0);
         }
         if ((material.flags & MATERIAL_FLAG_SPECULAR_MAP) != 0u)
         {
@@ -720,7 +726,7 @@ void main()
 #if RESOLVE_KIND == 2 // RESOLVE_KIND_TERRAIN
     vec4 shown = shadeSurface(color.rgb, worldNormal);
 #else
-    if ((material.flags & MATERIAL_FLAG_NORMAL_MAP) != 0u)
+    if ((material.flags & (MATERIAL_FLAG_NORMAL_MAP | MATERIAL_FLAG_BUMP_BRIGHTNESS | MATERIAL_FLAG_BUMP_DARKNESS)) != 0u)
     {
         // The tangent: octahedral like the normal, its handedness in the low bit of y.
         const uvec3 tangentWords = uvec3(attributes.words[base.x + 1u], attributes.words[base.y + 1u], attributes.words[base.z + 1u]);

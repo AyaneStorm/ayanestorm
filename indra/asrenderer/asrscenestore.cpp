@@ -364,7 +364,10 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     }
     material.flags = (command.desc.maps[MATERIAL_MAP_NORMAL].texture != 0 ? MATERIAL_FLAG_NORMAL_MAP : 0) |
                      (command.desc.maps[MATERIAL_MAP_SPECULAR].texture != 0 ? MATERIAL_FLAG_SPECULAR_MAP : 0) |
-                     (command.desc.fullbright ? MATERIAL_FLAG_FULLBRIGHT : 0) | (command.desc.emissiveAlpha ? MATERIAL_FLAG_EMISSIVE_ALPHA : 0);
+                     (command.desc.fullbright ? MATERIAL_FLAG_FULLBRIGHT : 0) | (command.desc.emissiveAlpha ? MATERIAL_FLAG_EMISSIVE_ALPHA : 0) |
+                     (command.desc.legacyBump == LEGACY_BUMP_IMAGE ? MATERIAL_FLAG_BUMP_IMAGE : 0) |
+                     (command.desc.legacyBump == LEGACY_BUMP_BRIGHTNESS ? MATERIAL_FLAG_BUMP_BRIGHTNESS : 0) |
+                     (command.desc.legacyBump == LEGACY_BUMP_DARKNESS ? MATERIAL_FLAG_BUMP_DARKNESS : 0);
     memcpy(material.specular, command.desc.specular, sizeof(material.specular));
     material.envIntensity = command.desc.envIntensity;
     const bool animated = (command.desc.anim.mode & TEXTURE_ANIM_ON) != 0 && command.desc.terrain == 0;
