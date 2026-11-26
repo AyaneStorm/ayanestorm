@@ -12039,17 +12039,6 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <real>0.04</real>
   </map>
-  <key>ASRendererExposureAdaptation</key>
-  <map>
-    <key>Comment</key>
-    <string>New renderer: how far the exposure follows the light, as the eye adapts. 1 brings every hour to noon's brightness; lower keeps a low sun, dusk and night dimmer than noon. 0.7 by default.</string>
-    <key>Persist</key>
-    <integer>1</integer>
-    <key>Type</key>
-    <string>F32</string>
-    <key>Value</key>
-    <real>0.7</real>
-  </map>
   <key>ASRendererLocalShift</key>
   <map>
     <key>Comment</key>

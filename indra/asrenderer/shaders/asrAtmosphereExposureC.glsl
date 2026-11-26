@@ -79,19 +79,8 @@ void main()
     const float sunIlluminance = dot(a.sunIlluminance * transmittance, LUMINANCE) * max(0.5 + 0.5 * a.sunDirection.z, 0.0);
     const float illuminance = max(skyIlluminance + sunIlluminance, ILLUMINANCE_FLOOR);
     ExposureRef result = ExposureRef(view.exposure);
-    // Partial adaptation to the sun, as the eye's: against the sun's own illuminance above the
-    // air (a noon of this EEP), the exposure follows the sun's light by exposureAdaptation
-    // only, so a low sun stays dimmer than noon. Fully adapted, the sun on screen came out
-    // about 1 / the meter's reading, brighter the lower it was until the air won near 2.5
-    // degrees. Weighed by the sun's share of the light: dusk and night, lit by the sky alone,
-    // keep their full adaptation, and noon reads 1.
-    const float noon = max(dot(a.sunIlluminance, LUMINANCE), ILLUMINANCE_FLOOR);
-    const float adaptation = clamp(view.exposureAdaptation, 0.0, 1.0);
-    const float sunShare = clamp(sunIlluminance / illuminance, 0.0, 1.0);
-    const float partial = pow(min(illuminance / noon, 1.0), 1.0 - adaptation);
-    const float adapted = ATMOSPHERE_PI / illuminance * mix(1.0, partial, sunShare);
     // The guard only lowers: at night the floor above still decides.
-    result.exposure = min(adapted, SKY_KEY / max(skyMean, 1e-9));
+    result.exposure = min(ATMOSPHERE_PI / illuminance, SKY_KEY / max(skyMean, 1e-9));
     result.illuminance = illuminance;
     result.skyIrradiance = skyIrradiance;
 }

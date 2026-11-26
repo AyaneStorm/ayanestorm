@@ -709,8 +709,7 @@ struct GpuSceneView
     uint32_t toneMapper;      // TONE_MAPPER_*
     float bloomStrength;      // ASRendererBloomStrength: the share of all light spread by bloom
     float glowStrength;       // RenderGlowStrength, 0 with RenderGlow off: SL glow's light into bloom
-    float exposureAdaptation; // ASRendererExposureAdaptation: 1 adapts fully to the light, less adapts partly
-    uint32_t pad0[2];
+    uint32_t pad0[3];
 };
 static_assert(sizeof(GpuSceneView) == 896, "shaders read this layout");
 // The atmosphere follows the view in its buffer, and its shader struct holds vec4s.

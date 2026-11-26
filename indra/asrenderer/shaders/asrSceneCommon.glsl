@@ -256,7 +256,6 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint toneMapper;         // TONE_MAPPER_*
     float bloomStrength;     // ASRendererBloomStrength
     float glowStrength;      // RenderGlowStrength, 0 with RenderGlow off
-    float exposureAdaptation; // ASRendererExposureAdaptation
 };
 
 const uint TONE_MAPPER_PBR_NEUTRAL = 0u; // see asrscene.h

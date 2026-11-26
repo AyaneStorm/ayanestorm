@@ -1725,7 +1725,6 @@ private:
         view.toneMapper = mRecordTone.mapper;
         view.bloomStrength = mRecordTone.bloom;
         view.glowStrength = mRecordTone.glow;
-        view.exposureAdaptation = mRecordTone.adaptation;
         if (!prepareOverlay(view, slot))
         {
             return false;
