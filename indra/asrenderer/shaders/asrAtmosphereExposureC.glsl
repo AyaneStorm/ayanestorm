@@ -94,17 +94,15 @@ void main()
     const float adapted = ATMOSPHERE_PI / illuminance * pow(min(illuminance / noon, 1.0), 1.0 - adaptation);
 
     // The night, as the eye sees it (user: a natural dark, lit by what light there is). From
-    // sun elevation -9 to -18 degrees (the end of astronomical twilight, when the eye has
-    // dark-adapted), the eye opens NIGHT_ADAPTATION times further, and surfaces take the real
-    // light: the moon's, through the air and setting over its disc, over a faint airglow and
-    // starlight that never lets a night go fully black. Above -9 degrees both weigh nothing,
-    // so sunrise and sunset stay as they were (user's condition, checked: every value above -9
-    // within 0.1 of before). Tuned on asrenderer_test --sky night --sun-elevation -18 with the
-    // viewer's moon (3e-3, gibbous), buildings against 77 at noon: moonless 12 (15%), moon at
-    // 14 degrees 18, 45 degrees 28, 75 degrees 32 (40%); twilight 34, 27, 16, 12 at -9, -12,
-    // -15, -18.
+    // sun elevation +3 to -9 degrees (user, 26 November 2026: it was -9 to -18, too late), the
+    // eye opens NIGHT_ADAPTATION times further, and surfaces take the real light: the moon's,
+    // through the air and setting over its disc, over a faint airglow and starlight that never
+    // lets a night go fully black. Above +3 degrees both weigh nothing. Tuned with the old
+    // -9 to -18 range on asrenderer_test --sky night --sun-elevation -18 with the viewer's moon
+    // (3e-3, gibbous), buildings against 77 at noon: moonless 12 (15%), moon at 14 degrees 18,
+    // 45 degrees 28, 75 degrees 32 (40%).
     const float sunElevation = degrees(asin(clamp(a.sunDirection.z, -1.0, 1.0)));
-    const float t = clamp((-9.0 - sunElevation) / 9.0, 0.0, 1.0);
+    const float t = clamp((3.0 - sunElevation) / 12.0, 0.0, 1.0);
     const float night = t * t * (3.0 - 2.0 * t);
     const vec3 moonThroughAir = lightThroughAir(a, position, a.moonDirection, a.moonAngularRadius);
     const float moonIlluminance = dot(a.moonSkyLight * moonThroughAir, LUMINANCE) * max(0.5 + 0.5 * a.moonDirection.z, 0.0);

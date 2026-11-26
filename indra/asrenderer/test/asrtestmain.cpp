@@ -15,6 +15,7 @@
  *                   [--sun-elevation DEG] after --sky: its sun at this elevation
  *                   [--moon-elevation DEG] after --sky: its moon at this elevation
  *                   [--adaptation K]     ASRendererExposureAdaptation
+ *                   [--exposure K]       RenderExposure, to lift a faint sky into view
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--clouds]           EEP's default 2D clouds over a made-up noise
  *                   [--cloud-map FILE]   with SL's cloud texture: an .asbc from the viewer's asrtextures cache
@@ -3510,6 +3511,10 @@ int main(int argc, char** argv)
         else if (arg == "--adaptation" && i + 1 < argc)
         {
             sTone.adaptation = std::stof(argv[++i]); // ASRendererExposureAdaptation
+        }
+        else if (arg == "--exposure" && i + 1 < argc)
+        {
+            sTone.exposure = std::stof(argv[++i]); // RenderExposure: lifts faint skies into view
         }
         else if (arg == "--sun-elevation" && i + 1 < argc)
         {
