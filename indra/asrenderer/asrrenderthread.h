@@ -157,6 +157,7 @@ struct FrameState
     OverlayInput overlay{}; // see FrameInput
     uint32_t worldView[4]{}; // see FrameInput
     float maxFramesPerSecond = 0.f; // the user's frame limit, which paces this thread; 0 is none
+    bool capture = false; // read the presented frame back (tests): see RenderThread::takeCapture()
 };
 
 // Makes the camera move on every frame, not only on those that follow a main-thread step.
@@ -272,6 +273,20 @@ public:
     // Valid once failed() is true.
     const std::string& error() const { return mError; }
 
+    // Main thread: true, with the pixels, once a frame drawn from a state with capture set
+    // has been read back. Never waits.
+    bool takeCapture(FrameCapture& out)
+    {
+        std::lock_guard<std::mutex> lock(mCaptureMutex);
+        if (!mHasCapture)
+        {
+            return false;
+        }
+        out = std::move(mCaptured);
+        mHasCapture = false;
+        return true;
+    }
+
 private:
     void run();
 
@@ -300,6 +315,11 @@ private:
     // Taken only when a frame is the worst so far, and by takeStats().
     std::mutex mWorstPartsMutex;
     FrameParts mWorstParts;
+
+    FrameCapture mCapturing;        // render thread: what the device fills
+    std::mutex mCaptureMutex;       // guards the two below
+    FrameCapture mCaptured;
+    bool mHasCapture = false;
 };
 
 } // namespace asr

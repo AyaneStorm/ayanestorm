@@ -11,6 +11,9 @@
  *                   [--sky NAME]         test sky: earth, noon, sunset, night, high, haze or fog
  *                   [--sky-view]         look across the city to the horizon, half sky
  *                   [--look-moon]        a still camera zoomed on the moon
+ *                   [--screenshot FILE [SECONDS]] the presented frame as a PNG, at 3 s by default
+ *                   [--sun-elevation DEG] after --sky: its sun at this elevation
+ *                   [--adaptation K]     ASRendererExposureAdaptation
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--clouds]           EEP's default 2D clouds over a made-up noise
  *                   [--cloud-map FILE]   with SL's cloud texture: an .asbc from the viewer's asrtextures cache
@@ -104,6 +107,96 @@ std::string sCloudMap;  // --cloud-map FILE
 float sAnisotropy = 16.f; // --anisotropy N: RenderAnisotropicLevel, 1 for none
 
 std::vector<uint8_t> readFile(const std::string& path); // below
+
+std::string sScreenshot;        // --screenshot FILE [SECONDS]: the presented frame as a PNG
+double sScreenshotAt = 3.0;     // seconds after the scene starts: the camera moves with time
+bool sScreenshotWanted = false; // set when that time comes, cleared once saved
+
+// A PNG with no compression (stored deflate blocks): no image library in the test, and
+// these are read once and deleted. RGB, rows top first, as FrameCapture gives them.
+bool writePng(const std::string& path, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba)
+{
+    uint32_t crcTable[256];
+    for (uint32_t n = 0; n < 256; ++n)
+    {
+        uint32_t c = n;
+        for (int k = 0; k < 8; ++k)
+        {
+            c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+        }
+        crcTable[n] = c;
+    }
+    std::vector<uint8_t> out = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    const auto put32 = [](std::vector<uint8_t>& v, uint32_t x)
+    {
+        v.push_back(uint8_t(x >> 24));
+        v.push_back(uint8_t(x >> 16));
+        v.push_back(uint8_t(x >> 8));
+        v.push_back(uint8_t(x));
+    };
+    const auto chunk = [&](const char* type, const std::vector<uint8_t>& data)
+    {
+        put32(out, uint32_t(data.size()));
+        const size_t start = out.size();
+        out.insert(out.end(), type, type + 4);
+        out.insert(out.end(), data.begin(), data.end());
+        uint32_t crc = 0xFFFFFFFFu;
+        for (size_t i = start; i < out.size(); ++i)
+        {
+            crc = crcTable[(crc ^ out[i]) & 0xFF] ^ (crc >> 8);
+        }
+        put32(out, crc ^ 0xFFFFFFFFu);
+    };
+    std::vector<uint8_t> header;
+    put32(header, width);
+    put32(header, height);
+    header.insert(header.end(), { 8, 2, 0, 0, 0 }); // 8 bits, RGB, deflate, no filter, no interlace
+    chunk("IHDR", header);
+
+    std::vector<uint8_t> raw;
+    raw.reserve(size_t(height) * (1 + size_t(width) * 3));
+    for (uint32_t y = 0; y < height; ++y)
+    {
+        raw.push_back(0); // no filter
+        for (uint32_t x = 0; x < width; ++x)
+        {
+            const uint8_t* p = &rgba[(size_t(y) * width + x) * 4];
+            raw.insert(raw.end(), p, p + 3);
+        }
+    }
+    std::vector<uint8_t> zlib = { 0x78, 0x01 };
+    uint32_t a = 1, b = 0;
+    for (uint8_t byte : raw)
+    {
+        a = (a + byte) % 65521u;
+        b = (b + a) % 65521u;
+    }
+    for (size_t at = 0; at < raw.size() || at == 0; at += 65535)
+    {
+        const size_t length = std::min<size_t>(65535, raw.size() - at);
+        zlib.push_back(at + length >= raw.size() ? 1 : 0); // last block flag, stored
+        zlib.push_back(uint8_t(length));
+        zlib.push_back(uint8_t(length >> 8));
+        zlib.push_back(uint8_t(~length));
+        zlib.push_back(uint8_t(~length >> 8));
+        zlib.insert(zlib.end(), raw.begin() + at, raw.begin() + at + length);
+        if (raw.empty())
+        {
+            break;
+        }
+    }
+    put32(zlib, (b << 16) | a);
+    chunk("IDAT", zlib);
+    chunk("IEND", {});
+
+    FILE* file = fopen(path.c_str(), "wb");
+    if (!file)
+    {
+        return false;
+    }
+    const bool written = fwrite(out.data(), 1, out.size(), file) == out.size();
+    return fclose(file) == 0 && written;
+}
 
 // --moon-maps: the viewer's moon (as_moon_albedo.png, as_moon_normal.png) as raw RGBA,
 // moon_albedo.rgba at 2048 x 1024 and moon_normal.rgba at 2048 x 1024 (heights in alpha), made into a sphere
@@ -3015,6 +3108,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         asr::FrameState& state = renderThread.state();
         window.pixelSize(state.width, state.height);
         state.testTriangle = !drawScene;
+        if (!sScreenshot.empty() && secondsSince(sceneStart) >= sScreenshotAt)
+        {
+            sScreenshotWanted = true;
+        }
+        state.capture = sScreenshotWanted;
         if (drawScene)
         {
             state.hasCamera = true;
@@ -3153,6 +3251,14 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
                 return false;
             }
             publishWindowSize();
+            asr::FrameCapture shot;
+            if (sScreenshotWanted && renderThread.takeCapture(shot))
+            {
+                sScreenshotWanted = false;
+                const bool saved = writePng(sScreenshot, shot.width, shot.height, shot.rgba);
+                printf("%s  screenshot %s (%u x %u)\n", saved ? "ok  " : "FAIL", sScreenshot.c_str(), shot.width, shot.height);
+                sScreenshot.clear(); // once
+            }
             buildUI();
             if (city)
             {
@@ -3390,6 +3496,14 @@ int main(int argc, char** argv)
             {
                 fprintf(stderr, "--sky takes earth, noon, sunset, night, high, haze, fog or starley\n");
                 return 1;
+            }
+        }
+        else if (arg == "--screenshot" && i + 1 < argc)
+        {
+            sScreenshot = argv[++i];
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
+                sScreenshotAt = atof(argv[++i]);
             }
         }
         else if (arg == "--adaptation" && i + 1 < argc)

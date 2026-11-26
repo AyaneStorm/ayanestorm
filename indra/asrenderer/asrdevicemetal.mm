@@ -401,12 +401,61 @@ public:
                 [encoder updateFence:mSceneFence afterStages:MTLRenderStageFragment];
             }
             [encoder endEncoding];
+
+            // FrameCapture: the finished image into a shared buffer. The layer's drawables are
+            // write-only until asked; the first request turns them readable and the next frame
+            // is the one read.
+            bool captured = false;
+            bool bgra = false;
+            if (input.capture)
+            {
+                input.capture->done = false;
+                const MTLPixelFormat format = drawable.texture.pixelFormat;
+                bgra = format == MTLPixelFormatBGRA8Unorm || format == MTLPixelFormatBGRA8Unorm_sRGB;
+                const bool eightBit = bgra || format == MTLPixelFormatRGBA8Unorm || format == MTLPixelFormatRGBA8Unorm_sRGB;
+                if (mLayer.framebufferOnly)
+                {
+                    mLayer.framebufferOnly = NO;
+                }
+                else if (eightBit)
+                {
+                    const NSUInteger w = drawable.texture.width;
+                    const NSUInteger h = drawable.texture.height;
+                    if (!mCaptureBuffer || mCaptureBuffer.length < w * h * 4)
+                    {
+                        mCaptureBuffer = [mDevice newBufferWithLength:w * h * 4 options:MTLResourceStorageModeShared];
+                    }
+                    id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+                    [blit copyFromTexture:drawable.texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                               sourceSize:MTLSizeMake(w, h, 1) toBuffer:mCaptureBuffer destinationOffset:0
+                    destinationBytesPerRow:w * 4 destinationBytesPerImage:w * h * 4];
+                    [blit endEncoding];
+                    input.capture->width = uint32_t(w);
+                    input.capture->height = uint32_t(h);
+                    captured = true;
+                }
+            }
             [commands presentDrawable:drawable];
 
             dispatch_semaphore_t frameSlots = mFrameSlots;
             [commands addCompletedHandler:^(id<MTLCommandBuffer>) { dispatch_semaphore_signal(frameSlots); }];
             [commands commit];
             ++mFrame;
+            if (captured)
+            {
+                [commands waitUntilCompleted];
+                FrameCapture& capture = *input.capture;
+                capture.rgba.resize(size_t(capture.width) * capture.height * 4);
+                const uint8_t* source = static_cast<const uint8_t*>(mCaptureBuffer.contents);
+                for (size_t i = 0; i < capture.rgba.size(); i += 4)
+                {
+                    capture.rgba[i + 0] = source[i + (bgra ? 2 : 0)];
+                    capture.rgba[i + 1] = source[i + 1];
+                    capture.rgba[i + 2] = source[i + (bgra ? 0 : 2)];
+                    capture.rgba[i + 3] = 255;
+                }
+                capture.done = true;
+            }
         }
         return true;
     }
@@ -3111,6 +3160,7 @@ private:
     id<MTLTexture> mLitTarget = nil;        // the opaque image, set 1 binding 8
     id<MTLTexture> mSceneColorTarget = nil; // with transparency, set 1 binding 9
     id<MTLTexture> mBloomTarget = nil;      // set 1 binding 19, see asrBloom.glsl
+    id<MTLBuffer> mCaptureBuffer = nil;     // FrameCapture
     id<MTLTexture> mSelectionMask = nil;    // see ResultSelectionMask, set 1 binding 10
     MacOITResources mMacOIT;
     SkyTables mSky;

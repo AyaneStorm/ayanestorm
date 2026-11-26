@@ -253,7 +253,15 @@ void fillStars(asr::SkyInput& sky, const LLSettingsSky& current)
     // ASStarsBrightness. OpenGL draws nothing below 0.001.
     const F32 alpha = current.getStarBrightness() / 500.f;
     const F32 t = llclamp(alpha / 0.9f, 0.f, 1.f);
-    sky.starBrightness = alpha < 0.001f ? 0.f : t * t * (3.f - 2.f * t) * 32.f * ASStars::brightness();
+    const F32 eepStars = alpha < 0.001f ? 0.f : t * t * (3.f - 2.f * t) * 32.f * ASStars::brightness();
+    // Our sky shows the real night whatever the EEP says (user): many EEPs keep stars off or
+    // drowned all night. The stars come out as the sun goes down, the first at the end of civil
+    // twilight (-6 degrees), all by nautical twilight (-12), at the EEP chain's full level. An
+    // EEP asking for more, as for stars by day, keeps its own. The Firestorm sky option (to
+    // come) follows the EEP alone, as OpenGL.
+    const F32 sunElevation = asinf(llclamp(current.getSunDirection().mV[VZ], -1.f, 1.f)) * RAD_TO_DEG;
+    const F32 night = llclamp((-6.f - sunElevation) / 6.f, 0.f, 1.f);
+    sky.starBrightness = llmax(eepStars, night * night * (3.f - 2.f * night) * 32.f * ASStars::brightness());
     sky.starTwinkle = ASStars::twinkleAmount();
     // starsV.glsl: the dome position times mod(time, 1.25), time being seconds / 2.
     sky.starTwinklePhase = radius * F32(fmod(LLFrameTimer::getElapsedSeconds() * 0.5, 1.25));

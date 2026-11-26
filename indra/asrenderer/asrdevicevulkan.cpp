@@ -393,6 +393,11 @@ public:
             return false;
         }
         const Clock::time_point uiDone = Clock::now();
+        if (input.capture)
+        {
+            input.capture->done = false;
+            ensureCaptureBuffer();
+        }
         if (!recordCommands(slot, image, input))
         {
             return false;
@@ -419,6 +424,10 @@ public:
             return false;
         }
         const Clock::time_point submitDone = Clock::now();
+        if (input.capture && mCaptureBuffer != VK_NULL_HANDLE)
+        {
+            readCapture(slot, *input.capture);
+        }
 
         VkPresentInfoKHR present{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present.waitSemaphoreCount = 1;
@@ -2367,6 +2376,75 @@ private:
         return true;
     }
 
+    // FrameCapture: a host buffer the size of the window, made on the first request and
+    // remade when the window grows. Only 8-bit surfaces, the formats the device picks.
+    void ensureCaptureBuffer()
+    {
+        const bool eightBit = mSurfaceFormat.format == VK_FORMAT_B8G8R8A8_UNORM || mSurfaceFormat.format == VK_FORMAT_B8G8R8A8_SRGB ||
+                              mSurfaceFormat.format == VK_FORMAT_R8G8B8A8_UNORM || mSurfaceFormat.format == VK_FORMAT_R8G8B8A8_SRGB;
+        const uint64_t bytes = uint64_t(mExtent.width) * mExtent.height * 4;
+        if (!mSwapchainReadable || !eightBit || bytes == 0)
+        {
+            destroyCaptureBuffer();
+            return;
+        }
+        if (mCaptureBuffer != VK_NULL_HANDLE && mCaptureBytes >= bytes)
+        {
+            return;
+        }
+        destroyCaptureBuffer();
+        VkBufferCreateInfo buffer{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        buffer.size = bytes;
+        buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(mAllocator, &buffer, &allocation, &mCaptureBuffer, &mCaptureAllocation, &info) != VK_SUCCESS)
+        {
+            mCaptureBuffer = VK_NULL_HANDLE;
+            mCaptureAllocation = VK_NULL_HANDLE;
+            return;
+        }
+        mCaptureMapped = info.pMappedData;
+        mCaptureBytes = bytes;
+    }
+
+    void destroyCaptureBuffer()
+    {
+        if (mCaptureBuffer != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(mAllocator, mCaptureBuffer, mCaptureAllocation);
+        }
+        mCaptureBuffer = VK_NULL_HANDLE;
+        mCaptureAllocation = VK_NULL_HANDLE;
+        mCaptureMapped = nullptr;
+        mCaptureBytes = 0;
+    }
+
+    // Waits for the frame just submitted, then copies its pixels out as RGBA.
+    void readCapture(uint32_t slot, FrameCapture& capture)
+    {
+        if (!check(vkWaitForFences(mDevice, 1, &mFences[slot], VK_TRUE, UINT64_MAX), "wait for capture"))
+        {
+            return;
+        }
+        vmaInvalidateAllocation(mAllocator, mCaptureAllocation, 0, VK_WHOLE_SIZE);
+        capture.width = mExtent.width;
+        capture.height = mExtent.height;
+        capture.rgba.resize(size_t(capture.width) * capture.height * 4);
+        const uint8_t* source = static_cast<const uint8_t*>(mCaptureMapped);
+        const bool bgra = mSurfaceFormat.format == VK_FORMAT_B8G8R8A8_UNORM || mSurfaceFormat.format == VK_FORMAT_B8G8R8A8_SRGB;
+        for (size_t i = 0; i < capture.rgba.size(); i += 4)
+        {
+            capture.rgba[i + 0] = source[i + (bgra ? 2 : 0)];
+            capture.rgba[i + 1] = source[i + 1];
+            capture.rgba[i + 2] = source[i + (bgra ? 0 : 2)];
+            capture.rgba[i + 3] = 255;
+        }
+        capture.done = true;
+    }
+
     // Bloom's levels down from the scene colour, then back up: each dispatch reads what the
     // one before wrote (asrSceneBloomC.glsl). Nothing to spread: the composite skips it too.
     bool passBloom()
@@ -4290,7 +4368,9 @@ private:
         create.imageColorSpace = mSurfaceFormat.colorSpace;
         create.imageExtent = extent;
         create.imageArrayLayers = 1;
-        create.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        // Readable too where the surface allows it, for FrameCapture (tests' screenshots).
+        mSwapchainReadable = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+        create.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (mSwapchainReadable ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
         create.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         create.preTransform = caps.currentTransform;
         create.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -4452,8 +4532,47 @@ private:
             recordOverlays(commands, image, slot, input.ui, input.camera);
         }
 
-        imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_PIPELINE_STAGE_2_NONE);
+        if (input.capture && mCaptureBuffer != VK_NULL_HANDLE)
+        {
+            // The finished image into the capture buffer, then on to the screen.
+            imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            copy.imageExtent = { mExtent.width, mExtent.height, 1 };
+            vkCmdCopyImageToBuffer(commands, mImages[image], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mCaptureBuffer, 1, &copy);
+            VkImageMemoryBarrier2 toPresent{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            toPresent.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            toPresent.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+            toPresent.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
+            toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            toPresent.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toPresent.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toPresent.image = mImages[image];
+            toPresent.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            // The buffer is read on the host once the frame's fence signals.
+            VkBufferMemoryBarrier2 toHost{ VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 };
+            toHost.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+            toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+            toHost.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toHost.buffer = mCaptureBuffer;
+            toHost.size = VK_WHOLE_SIZE;
+            VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dependency.imageMemoryBarrierCount = 1;
+            dependency.pImageMemoryBarriers = &toPresent;
+            dependency.bufferMemoryBarrierCount = 1;
+            dependency.pBufferMemoryBarriers = &toHost;
+            vkCmdPipelineBarrier2(commands, &dependency);
+        }
+        else
+        {
+            imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_PIPELINE_STAGE_2_NONE);
+        }
         mDiagnostics.checkpoint(commands, PassCount + 1, "composite and UI", true);
         return check(vkEndCommandBuffer(commands), "end commands");
     }
@@ -4466,6 +4585,7 @@ private:
             mShuttingDown = true;
             destroySwapchainViews();
             destroyScene();
+            destroyCaptureBuffer();
             for (uint32_t slot = 0; slot < mTextureObjects.size(); ++slot)
             {
                 destroyTexture(slot);
@@ -4695,6 +4815,11 @@ private:
     TargetImage mLitImage;
     TargetImage mSceneColorImage;
     TargetImage mBloomImage; // set 1 binding 19, see asrBloom.glsl
+    bool mSwapchainReadable = false; // FrameCapture
+    VkBuffer mCaptureBuffer = VK_NULL_HANDLE;
+    VmaAllocation mCaptureAllocation = VK_NULL_HANDLE;
+    void* mCaptureMapped = nullptr;
+    uint64_t mCaptureBytes = 0;
     TargetImage mSelectionMask; // see ResultSelectionMask
     Overlay mOverlay;
     const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()

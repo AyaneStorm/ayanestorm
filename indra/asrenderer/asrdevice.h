@@ -105,6 +105,17 @@ struct ToneInput
     float adaptation = 0.7f;              // ASRendererExposureAdaptation
 };
 
+// The presented frame, read back for tests (asrenderer_test --screenshot): 8-bit RGBA, top row
+// first. done stays false when the device needs a frame to get ready (Metal's layer turning
+// readable); ask again on the next frame.
+struct FrameCapture
+{
+    std::vector<uint8_t> rgba;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    bool done = false;
+};
+
 struct FrameInput
 {
     uint32_t width = 0; // in pixels; a change of size recreates what depends on it
@@ -121,6 +132,7 @@ struct FrameInput
     // Where the scene goes in the window, as OpenGL's world view: x, y from the top left,
     // width, height, in pixels. The rest is the UI's. A width of 0 is the whole window.
     uint32_t worldView[4]{};
+    FrameCapture* capture = nullptr; // set: the presented image is read back; waits for the GPU
 };
 
 constexpr uint32_t MAX_TIMED_PASSES = 48; // every scene pass, audit and feedback included

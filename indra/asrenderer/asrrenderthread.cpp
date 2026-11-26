@@ -613,11 +613,19 @@ void RenderThread::run()
         input.audit = state.audit;
         input.overlay = state.overlay;
         std::copy(std::begin(state.worldView), std::end(state.worldView), std::begin(input.worldView));
+        input.capture = state.capture ? &mCapturing : nullptr;
         if (!mDevice.renderFrame(input))
         {
             mError = mDevice.lastError();
             mFailed.store(true, std::memory_order_release);
             return;
+        }
+        if (input.capture && mCapturing.done)
+        {
+            std::lock_guard<std::mutex> lock(mCaptureMutex);
+            mCaptured = std::move(mCapturing);
+            mCapturing = FrameCapture();
+            mHasCapture = true;
         }
 
         const Clock::time_point frameEnd = Clock::now();
