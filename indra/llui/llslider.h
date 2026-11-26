@@ -96,7 +96,7 @@ private:
     S32             mLastDragMousePos;
     F32             mCtrlDragMultiplier;
     F32             mDragValue; // unrounded, so steps below the increment add up
-    void            ctrlDragTo(S32 pos, S32 span, MASK mask);
+    void            ctrlDragTo(S32 x, S32 y, S32 span, MASK mask);
     // </AS:Chanayane>
 
     LLPointer<LLUIImage>    mThumbImage;

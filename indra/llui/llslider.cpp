@@ -169,12 +169,33 @@ void LLSlider::setValueAndCommit(F32 value)
 
 // <AS:Chanayane> Delta drag for opted-in sliders: full speed, or with Ctrl 1/16 times
 // ctrl_drag_multiplier. The value is kept unrounded during the drag, so slow steps
-// smaller than the increment add up instead of being rounded away each move.
-void LLSlider::ctrlDragTo(S32 pos, S32 span, MASK mask)
+// smaller than the increment add up instead of being rounded away each move. With Ctrl
+// the cursor is put back after each move: the hand travels many times farther than the
+// thumb, and would otherwise reach the screen's edge long before the slider's end.
+void LLSlider::ctrlDragTo(S32 x, S32 y, S32 span, MASK mask)
 {
-    const F32 speed = (mask & MASK_CONTROL) ? 0.0625f * mCtrlDragMultiplier : 1.f;
+    const bool horizontal = mOrientation == HORIZONTAL;
+    const bool fine = (mask & MASK_CONTROL) != 0;
+    const F32 speed = fine ? 0.0625f * mCtrlDragMultiplier : 1.f;
+    const S32 pos = horizontal ? x : y;
     const S32 delta = pos - mLastDragMousePos;
-    mLastDragMousePos = pos;
+    if (delta == 0)
+    {
+        return; // also the move the cursor's return makes
+    }
+    if (fine)
+    {
+        LLUI::getInstance()->setMousePositionLocal(this, horizontal ? mLastDragMousePos : x, horizontal ? y : mLastDragMousePos);
+        // Where it really landed, after UI scale rounding: holding still must not creep.
+        S32 landed_x = 0;
+        S32 landed_y = 0;
+        LLUI::getInstance()->getMousePositionLocal(this, &landed_x, &landed_y);
+        mLastDragMousePos = horizontal ? landed_x : landed_y;
+    }
+    else
+    {
+        mLastDragMousePos = pos;
+    }
     mDragValue = llclamp(mDragValue + (F32(delta) / llmax(1, span)) * (mMaxValue - mMinValue) * speed, mMinValue, mMaxValue);
     setValueAndCommit(mDragValue);
 }
@@ -193,7 +214,7 @@ bool LLSlider::handleHover(S32 x, S32 y, MASK mask)
             // <AS:Chanayane> Delta-based opt-in dragging allows slow travel beyond the slider track.
             if (mCtrlDragEnabled)
             {
-                ctrlDragTo(x, right_edge - left_edge, mask);
+                ctrlDragTo(x, y, right_edge - left_edge, mask);
             }
             else
             {
@@ -216,7 +237,7 @@ bool LLSlider::handleHover(S32 x, S32 y, MASK mask)
             // <AS:Chanayane> Match horizontal opt-in precision behavior.
             if (mCtrlDragEnabled)
             {
-                ctrlDragTo(y, bottom_edge - top_edge, mask);
+                ctrlDragTo(x, y, bottom_edge - top_edge, mask);
             }
             else
             {
