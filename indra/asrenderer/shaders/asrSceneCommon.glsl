@@ -257,7 +257,30 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     float bloomStrength;     // ASRendererBloomStrength
     float glowStrength;      // RenderGlowStrength, 0 with RenderGlow off
     float exposureAdaptation; // ASRendererExposureAdaptation
+    uint64_t resolveTiles;   // ResolveTilesRef below
 };
+
+// The resolve's tiles by material kind (asrSceneClassifyC.glsl), as GpuResolveTiles: a
+// dispatch per kind, then each kind's list of tiles, x | y << 16, tileCapacity() apart.
+const uint RESOLVE_KIND_SKY = 0u;     // nothing drawn: the sky
+const uint RESOLVE_KIND_SURFACE = 1u; // face UV and planar surfaces
+const uint RESOLVE_KIND_TERRAIN = 2u;
+const uint RESOLVE_KINDS = 3u;
+const uint RESOLVE_KIND_SLOTS = 4u;   // dispatches the header holds
+const uint RESOLVE_GROUP_SIZE = 8u;   // a tile's side, as asrscene.h
+layout(buffer_reference, std430) buffer ResolveTilesRef
+{
+    // Per kind, 4 words: tiles, then 1 and 1 once there is one, then unused. Plain words, as
+    // Metal has no atomics on a vector's element.
+    uint dispatches[RESOLVE_KIND_SLOTS * 4u];
+    uint tiles[];
+};
+
+uint tileCapacity(ViewRef view)
+{
+    const uvec2 tiles = (uvec2(view.pixelSize.xy) + RESOLVE_GROUP_SIZE - 1u) / RESOLVE_GROUP_SIZE;
+    return tiles.x * tiles.y;
+}
 
 const uint TONE_MAPPER_PBR_NEUTRAL = 0u; // see asrscene.h
 const uint TONE_MAPPER_ACES = 1u;

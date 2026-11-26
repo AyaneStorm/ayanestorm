@@ -95,7 +95,7 @@ endfunction()
 
 set(ASR_SHADER_OUTPUTS)
 foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asrScenePyramidC asrSceneVisibilityV
-        asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF asrSceneSkinC
+        asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneClassifyC asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSceneCompositeV asrSceneCompositeF asrSceneSkinC
         asrSceneMacOITV asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSceneMacOITResolveC
         asrOverlayV asrOverlayMaskF asrOverlayHudF asrOverlayOutlineF asrOverlayDepthF
         asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
@@ -120,14 +120,20 @@ foreach(shader asrSceneSkinC asrSceneCullC)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneSkinDemand.glsl)
 endforeach()
+# The resolve's kinds share one body.
+foreach(shader asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneResolve.glsl)
+endforeach()
 # The sky's tables, the resolve and Mac OIT's passes (through asrSceneMacOIT.glsl) share the atmosphere functions.
 foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
-        asrSceneResolveC asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSkyStarsV asrSkyStarsF)
+        asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF
+        asrSkyStarsV asrSkyStarsF)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrAtmosphere.glsl)
 endforeach()
 # EEP's 2D clouds: the background and the stars they hide.
-foreach(shader asrSceneResolveC asrSkyStarsV)
+foreach(shader asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSkyStarsV)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSkyClouds.glsl)
 endforeach()

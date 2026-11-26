@@ -63,6 +63,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("aerial lut", ResultScope::Frame);
     graph.addResult("exposure", ResultScope::Frame);
     graph.addResult("bloom", ResultScope::Frame);
+    graph.addResult("resolve tiles", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -126,9 +127,15 @@ void declareSceneGraph(FrameGraph& graph)
                                   { ResultMultiscatterLut, ComputeRead },
                                   { ResultAerialLut, ComputeWrite } });
     graph.addPass("exposure", { { ResultTransmittanceLut, ComputeRead }, { ResultSkyViewLut, ComputeRead }, { ResultExposure, ComputeWrite } });
+    // The tiles' counts are cleared inside this pass, before its dispatch.
+    graph.addPass("classify", { { ResultSceneData, ComputeRead },
+                                { ResultVisibleClusters, ComputeRead },
+                                { ResultVisibility, ComputeRead },
+                                { ResultResolveTiles, ComputeWrite } });
     graph.addPass("resolve", { { ResultSceneData, ComputeRead },
                                { ResultVisibleClusters, ComputeRead },
                                { ResultVisibility, ComputeRead },
+                               { ResultResolveTiles, Indirect | ComputeRead },
                                { ResultTransmittanceLut, ComputeRead },
                                { ResultSkyViewLut, ComputeRead },
                                { ResultAerialLut, ComputeRead },

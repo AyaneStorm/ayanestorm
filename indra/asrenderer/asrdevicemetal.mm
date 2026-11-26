@@ -665,7 +665,11 @@ private:
     {
         mCullPipeline = createComputePipeline(shaderDir, "asrSceneCullC", error);
         mPyramidPipeline = createComputePipeline(shaderDir, "asrScenePyramidC", error);
-        mResolvePipeline = createComputePipeline(shaderDir, "asrSceneResolveC", error);
+        mClassifyPipeline = createComputePipeline(shaderDir, "asrSceneClassifyC", error);
+        mResolvePipelines[0] = createComputePipeline(shaderDir, "asrSceneResolveSkyC", error);
+        mResolvePipelines[1] = createComputePipeline(shaderDir, "asrSceneResolveSurfaceC", error);
+        mResolvePipelines[2] = createComputePipeline(shaderDir, "asrSceneResolveTerrainC", error);
+        static_assert(RESOLVE_KINDS == 3, "a pipeline per kind");
         mBloomPipeline = createComputePipeline(shaderDir, "asrSceneBloomC", error);
         mSkinPipeline = createComputePipeline(shaderDir, "asrSceneSkinC", error);
         mTextureMipPipeline = createComputePipeline(shaderDir, "asrTextureMipC", error);
@@ -683,7 +687,7 @@ private:
         id<MTLFunction> maskedFragment = loadFunction(shaderDir, "asrSceneMaskedF", error);
         id<MTLFunction> compositeVertex = loadFunction(shaderDir, "asrSceneCompositeV", error);
         id<MTLFunction> compositeFragment = loadFunction(shaderDir, "asrSceneCompositeF", error);
-        if (!mCullPipeline || !mPyramidPipeline || !mResolvePipeline || !mSkinPipeline || !visibilityVertex || !visibilityFragment || !maskedVertex || !maskedFragment ||
+        if (!mCullPipeline || !mPyramidPipeline || !mClassifyPipeline || !mResolvePipelines[0] || !mResolvePipelines[1] || !mResolvePipelines[2] || !mSkinPipeline || !visibilityVertex || !visibilityFragment || !maskedVertex || !maskedFragment ||
             !compositeVertex || !compositeFragment)
         {
             return false;
@@ -1644,7 +1648,12 @@ private:
         uint32_t levels = 0;
         const uint64_t pyramidBytes = uint64_t(pyramidLayout(width, height, offsets, levels)) * sizeof(float);
         mScenePyramid = createSceneBuffer(pyramidBytes, MemoryCategory::RenderTargets, "depth pyramid", true);
-        return mVisibilityTarget && mDepthTarget && mNormalTarget && mScenePyramid;
+        if (mResolveTiles)
+        {
+            mRetiredBuffers.push_back({ mResolveTiles, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::RenderTargets });
+        }
+        mResolveTiles = createSceneBuffer(resolveTilesBytes(width, height), MemoryCategory::RenderTargets, "resolve tiles", true);
+        return mVisibilityTarget && mDepthTarget && mNormalTarget && mScenePyramid && mResolveTiles;
     }
 
     // Frames still running may read the old table, so it stays until they are done.
@@ -1775,6 +1784,7 @@ private:
         view.debugView = mRecordCamera->debugView;
         view.atmosphere = addressOf(mSceneViews[slot]) + sizeof(GpuSceneView);
         view.exposure = addressOf(mSky.exposure);
+        view.resolveTiles = addressOf(mResolveTiles);
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
         view.toneMapper = mRecordTone.mapper;
@@ -1927,17 +1937,41 @@ private:
             [clear endEncoding];
         }
         id<MTLComputeCommandEncoder> resolve = beginCompute();
-        [resolve setComputePipelineState:mResolvePipeline];
         [resolve setBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [resolve setTexture:mVisibilityTarget atIndex:0];
         [resolve setTexture:mNormalTarget atIndex:2];
         [resolve setTexture:mLitTarget atIndex:8];
         bindSkyTables(resolve); // the background
-        [resolve dispatchThreadgroups:MTLSizeMake((mSceneWidth + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (mSceneHeight + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
-                threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
+        // Each kind writes only its own pixels, so the dispatches need nothing between them.
+        for (uint32_t kind = 0; kind < RESOLVE_KINDS; ++kind)
+        {
+            [resolve setComputePipelineState:mResolvePipelines[kind]];
+            [resolve dispatchThreadgroupsWithIndirectBuffer:mResolveTiles indirectBufferOffset:kind * 16
+                                      threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
+        }
         [resolve updateFence:mSceneFence];
         [resolve endEncoding];
+        return true;
+    }
+
+    bool passClassify()
+    {
+        // The dispatch counts start at 0.
+        id<MTLBlitCommandEncoder> clear = [mRecordCommands blitCommandEncoder];
+        [clear waitForFence:mSceneFence];
+        [clear fillBuffer:mResolveTiles range:NSMakeRange(0, RESOLVE_TILES_HEADER) value:0];
+        [clear updateFence:mSceneFence];
+        [clear endEncoding];
+        id<MTLComputeCommandEncoder> classify = beginCompute();
+        [classify setComputePipelineState:mClassifyPipeline];
+        [classify setBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
+        [classify setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [classify setTexture:mVisibilityTarget atIndex:0];
+        [classify dispatchThreadgroups:MTLSizeMake((mSceneWidth + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (mSceneHeight + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
+                 threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
+        [classify updateFence:mSceneFence];
+        [classify endEncoding];
         return true;
     }
 
@@ -2002,6 +2036,7 @@ private:
         mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
         mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityTarget, offsetof(GpuSceneCounts, late), true, true); });
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
+        mGraph.setBody(PassClassify, [this]() { return passClassify(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
         mGraph.setBody(PassStars, [this]() { return passStars(); });
         mGraph.setBody(PassBloom, [this]() { return passBloom(); });
@@ -3130,6 +3165,7 @@ private:
     id<MTLBuffer> mSceneGroups = nil;
     id<MTLBuffer> mSceneCounts = nil;
     id<MTLBuffer> mScenePyramid = nil;
+    id<MTLBuffer> mResolveTiles = nil; // GpuResolveTiles, sized with the scene
     id<MTLBuffer> mSceneCountsTemplate = nil;
     id<MTLBuffer> mSceneViews[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneReadback[FRAMES_IN_FLIGHT];
@@ -3145,7 +3181,8 @@ private:
     std::deque<RetiredBuffer> mRetiredBuffers;
     id<MTLComputePipelineState> mCullPipeline = nil;
     id<MTLComputePipelineState> mPyramidPipeline = nil;
-    id<MTLComputePipelineState> mResolvePipeline = nil;
+    id<MTLComputePipelineState> mClassifyPipeline = nil;
+    id<MTLComputePipelineState> mResolvePipelines[RESOLVE_KINDS] = {}; // RESOLVE_KIND_*
     id<MTLComputePipelineState> mBloomPipeline = nil;
     id<MTLComputePipelineState> mSkinPipeline = nil;
     id<MTLRenderPipelineState> mVisibilityPipeline = nil;

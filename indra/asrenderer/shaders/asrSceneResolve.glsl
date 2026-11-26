@@ -1,12 +1,11 @@
 /**
- * asrSceneResolveC.glsl
- * Turns the visibility buffer into G-buffer pixels: each visible pixel is shaded once,
- * whatever was drawn over or under it. Barycentrics and their screen derivatives come
- * from the triangle's three vertices, which gives texture sampling the same gradients a
- * fragment shader would have had.
+ * asrSceneResolve.glsl
+ * Turns the visibility buffer into lit pixels: each visible pixel is shaded once, whatever
+ * was drawn over or under it. Barycentrics and their screen derivatives come from the
+ * triangle's three vertices, which gives texture sampling the same gradients a fragment
+ * shader would have had. Built once per material kind (asrSceneResolve*C.glsl define
+ * RESOLVE_KIND), each run over the tiles asrSceneClassifyC.glsl listed for that kind.
  */
-#version 460
-#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_nonuniform_qualifier : require
 #include "asrSceneCommon.glsl"
 
@@ -530,17 +529,30 @@ vec4 terrainColor(ivec2 pixel, Terrain terrain, vec3 region, vec3 regionDx, vec3
     return color;
 }
 
+// A pixel the resolve cannot place: reported by the surface pass only, where the classify
+// pass sends such pixels, so each is reported once.
+#if RESOLVE_KIND == 1 // RESOLVE_KIND_SURFACE
+#define REJECT(pixel, guard, value) reject(pixel, guard, value)
+#else
+#define REJECT(pixel, guard, value)
+#endif
+
 void main()
 {
-    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ViewRef view = ViewRef(push.view);
+    const uint packedTile = ResolveTilesRef(view.resolveTiles).tiles[RESOLVE_KIND * tileCapacity(view) + gl_WorkGroupID.x];
+    const ivec2 pixel = ivec2(uvec2(packedTile & 0xFFFFu, packedTile >> 16) * RESOLVE_GROUP_SIZE + gl_LocalInvocationID.xy);
     if (pixel.x >= int(view.pixelSize.x) || pixel.y >= int(view.pixelSize.y))
     {
         return;
     }
 
     const uint id = imageLoad(visibility, pixel).r;
-    if (id == 0xFFFFFFFFu)
+#if RESOLVE_KIND == 0 // RESOLVE_KIND_SKY
+    if (id != 0xFFFFFFFFu)
+    {
+        return;
+    }
     {
         imageStore(normals, pixel, vec4(0.0));
         const vec2 ndc = (vec2(pixel) + 0.5) * (2.0 / view.pixelSize.xy) - 1.0;
@@ -550,6 +562,10 @@ void main()
         // Inside half floats after exposure: an infinite sun made bloom spread over the clouds in
         // front of it (user: the sun no longer hidden by clouds).
         imageStore(lit, pixel, vec4(min(sky * ExposureRef(view.exposure).exposure, vec3(60000.0)), 0.0));
+    }
+#else
+    if (id == 0xFFFFFFFFu)
+    {
         return;
     }
 
@@ -557,25 +573,31 @@ void main()
     const uint entry = id >> 6;
     if (entry >= view.visibleEnd)
     {
-        reject(pixel, GUARD_ENTRY, entry);
+        REJECT(pixel, GUARD_ENTRY, entry);
         return;
     }
     const ListEntry visible = ListRef(push.visible).items[entry];
     if (visible.instance >= view.instanceEnd)
     {
-        reject(pixel, GUARD_INSTANCE, visible.instance);
+        REJECT(pixel, GUARD_INSTANCE, visible.instance);
         return;
     }
     if (visible.cluster >= view.clusterEnd)
     {
-        reject(pixel, GUARD_CLUSTER, visible.cluster);
+        REJECT(pixel, GUARD_CLUSTER, visible.cluster);
         return;
     }
     const Cluster cluster = ClustersRef(push.clusters).items[visible.cluster];
     const Instance instance = InstancesRef(push.instances).items[visible.instance];
     if (instance.material >= view.materialEnd)
     {
-        reject(pixel, GUARD_MATERIAL, instance.material);
+        REJECT(pixel, GUARD_MATERIAL, instance.material);
+        return;
+    }
+    const Material material = MaterialsRef(push.materials).items[instance.material];
+    // From here on the pixel's kind is known and only its own pass goes on.
+    if ((material.mapping == MATERIAL_TERRAIN) != (RESOLVE_KIND == RESOLVE_KIND_TERRAIN))
+    {
         return;
     }
     // One blob holds a cluster's indices, then positions, then attributes, in one chunk.
@@ -586,9 +608,8 @@ void main()
         reject(pixel, GUARD_ADDRESSES, uint(min((cluster.attributes - cluster.indices) >> 20, 0xFFFFFFFFul)));
         return;
     }
-    const Material material = MaterialsRef(push.materials).items[instance.material];
 
-    const uint i0 = clusterIndex(cluster.indices, triangle * 3u);
+    const uint i0 =clusterIndex(cluster.indices, triangle * 3u);
     const uint i1 = clusterIndex(cluster.indices, triangle * 3u + 1u);
     const uint i2 = clusterIndex(cluster.indices, triangle * 3u + 2u);
     const mat4 viewProjection = view.viewProjection;
@@ -627,7 +648,7 @@ void main()
     const vec3 objectNormal = mat3(n0, n1, n2) * bary.weights;
 
     vec4 color;
-    if (material.mapping == MATERIAL_TERRAIN)
+#if RESOLVE_KIND == 2 // RESOLVE_KIND_TERRAIN
     {
         // Ground: its position in region metres places the layers, and its UVs blend them.
         const mat3 region = mat3(packedPosition(cluster.positions, i0) * material.planarScale + material.planarOffset,
@@ -638,7 +659,7 @@ void main()
         color = terrainColor(pixel, terrain, region * bary.weights, region * bary.ddx, region * bary.ddy, blends * bary.weights, blends * bary.ddx,
                              blends * bary.ddy, objectNormal);
     }
-    else
+#else
     {
         if (material.mapping == MATERIAL_PLANAR)
         {
@@ -656,6 +677,7 @@ void main()
         const vec2 uvDy = vec2(dot(material.uvRow0.xy, faceDy), dot(material.uvRow1.xy, faceDy));
         color = material.color * sampleBits(pixel, material.texture, uv, uvDx, uvDy);
     }
+#endif
 
     vec3 worldNormal = worldNormalOf(instance, objectNormal);
 
@@ -700,4 +722,5 @@ void main()
     }
     // Pre-exposed, as the sky above.
     imageStore(lit, pixel, vec4(min(shown.rgb * ExposureRef(view.exposure).exposure, vec3(60000.0)), shown.a));
+#endif
 }

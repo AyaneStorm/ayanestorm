@@ -493,7 +493,7 @@ struct GpuSceneCounts
     GpuDrawArguments selection; // the early cull's selected clusters, for the selection mask
 };
 static_assert(sizeof(GpuSceneCounts) == 1120, "shaders read this layout");
-static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolveC.glsl's GUARD_OFFSET");
+static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolve.glsl's GUARD_OFFSET");
 static_assert(offsetof(GpuSceneCounts, macoitTailSeen) == 832, "asrSceneMacOIT.glsl's MACOIT_TAIL_SEEN_OFFSET");
 static_assert(offsetof(GpuSceneCounts, skinAuditSamples) == 836, "asrSceneSkinAudit.glsl's counter offset");
 
@@ -710,8 +710,23 @@ struct GpuSceneView
     float bloomStrength;      // ASRendererBloomStrength: the share of all light spread by bloom
     float glowStrength;       // RenderGlowStrength, 0 with RenderGlow off: SL glow's light into bloom
     float exposureAdaptation; // ASRendererExposureAdaptation: 1 adapts fully to the light, less adapts partly
-    uint32_t pad0[2];
+    uint64_t resolveTiles;    // GpuResolveTiles: the resolve's tiles by material kind
 };
+
+// The resolve runs once per material kind, each over only the tiles holding that kind
+// (asrSceneClassifyC.glsl). Header: a dispatch per kind slot; then each kind's tile list,
+// resolveTileCapacity() entries apart.
+constexpr uint32_t RESOLVE_KINDS = 3;      // sky, surface, terrain (RESOLVE_KIND_* in asrSceneCommon.glsl)
+constexpr uint32_t RESOLVE_KIND_SLOTS = 4; // the header's room
+constexpr uint32_t RESOLVE_TILES_HEADER = RESOLVE_KIND_SLOTS * 16;
+inline uint32_t resolveTileCapacity(uint32_t width, uint32_t height)
+{
+    return ((width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE) * ((height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE);
+}
+inline uint64_t resolveTilesBytes(uint32_t width, uint32_t height)
+{
+    return RESOLVE_TILES_HEADER + uint64_t(RESOLVE_KINDS) * resolveTileCapacity(width, height) * 4;
+}
 static_assert(sizeof(GpuSceneView) == 896, "shaders read this layout");
 // The atmosphere follows the view in its buffer, and its shader struct holds vec4s.
 static_assert(sizeof(GpuSceneView) % 16 == 0, "the atmosphere after the view must stay 16-byte aligned");

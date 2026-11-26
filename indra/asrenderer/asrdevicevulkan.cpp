@@ -1464,8 +1464,12 @@ private:
 
         mCullPipeline = createComputePipeline("asrSceneCullC", error);
         mPyramidPipeline = mCullPipeline ? createComputePipeline("asrScenePyramidC", error) : VK_NULL_HANDLE;
-        mResolvePipeline = mPyramidPipeline ? createComputePipeline("asrSceneResolveC", error) : VK_NULL_HANDLE;
-        mVisibilityPipeline = mResolvePipeline ? createSceneRasterPipeline("asrSceneVisibilityV", "asrSceneVisibilityF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
+        mClassifyPipeline = mPyramidPipeline ? createComputePipeline("asrSceneClassifyC", error) : VK_NULL_HANDLE;
+        mResolvePipelines[0] = mClassifyPipeline ? createComputePipeline("asrSceneResolveSkyC", error) : VK_NULL_HANDLE;
+        mResolvePipelines[1] = mResolvePipelines[0] ? createComputePipeline("asrSceneResolveSurfaceC", error) : VK_NULL_HANDLE;
+        mResolvePipelines[2] = mResolvePipelines[1] ? createComputePipeline("asrSceneResolveTerrainC", error) : VK_NULL_HANDLE;
+        static_assert(RESOLVE_KINDS == 3, "a pipeline per kind");
+        mVisibilityPipeline = mResolvePipelines[2] ?createSceneRasterPipeline("asrSceneVisibilityV", "asrSceneVisibilityF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mMaskedPipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneMaskedV", "asrSceneMaskedF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mCompositePipeline = mMaskedPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
         mBloomPipeline = mCompositePipeline ? createComputePipeline("asrSceneBloomC", error) : VK_NULL_HANDLE;
@@ -1607,6 +1611,7 @@ private:
         destroyTarget(mSelectionMask);
         destroyMacOITTargets();
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
+        destroyBufferObject(mResolveTiles, MemoryCategory::RenderTargets);
         for (bool& written : mAuditWritten)
         {
             written = false;
@@ -1630,7 +1635,10 @@ private:
         uint32_t offsets[PYRAMID_MAX_LEVELS];
         uint32_t levels = 0;
         const uint64_t pyramidBytes = uint64_t(pyramidLayout(mSceneExtent.width, mSceneExtent.height, offsets, levels)) * sizeof(float);
-        if (!createBufferObject(mScenePyramid, pyramidBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "depth pyramid", MemoryCategory::RenderTargets, true))
+        if (!createBufferObject(mScenePyramid, pyramidBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "depth pyramid", MemoryCategory::RenderTargets, true) ||
+            !createBufferObject(mResolveTiles, resolveTilesBytes(mSceneExtent.width, mSceneExtent.height),
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "resolve tiles",
+                                MemoryCategory::RenderTargets, true))
         {
             return false;
         }
@@ -2531,6 +2539,7 @@ private:
         destroyBufferObject(mSceneCounts);
         destroyBufferObject(mTextureFeedback);
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
+        destroyBufferObject(mResolveTiles, MemoryCategory::RenderTargets);
         destroyBuffer(mSceneCountsTemplate, MemoryCategory::Staging);
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
@@ -2553,7 +2562,8 @@ private:
         destroyMacOITPipelines();
         destroySky();
         destroyOverlay();
-        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mBloomPipeline, mSkinPipeline,
+        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mClassifyPipeline, mResolvePipelines[0],
+                                     mResolvePipelines[1], mResolvePipelines[2], mCompositePipeline, mBloomPipeline, mSkinPipeline,
                                      mTextureMipPipeline, mEncodeBC1Pipeline, mEncodeBC45Pipeline, mEncodeBC7Pipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
@@ -3942,6 +3952,7 @@ private:
         const VkDeviceAddress viewAddress = vkGetBufferDeviceAddress(mDevice, &address);
         view.atmosphere = viewAddress + sizeof(GpuSceneView);
         view.exposure = mSky.exposure.address;
+        view.resolveTiles = mResolveTiles.address;
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
         view.toneMapper = mRecordTone.mapper;
@@ -4100,7 +4111,29 @@ private:
             memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         }
-        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mResolvePipeline);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        pushScene(commands);
+        // Each kind writes only its own pixels, so the dispatches need nothing between them.
+        for (uint32_t kind = 0; kind < RESOLVE_KINDS; ++kind)
+        {
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mResolvePipelines[kind]);
+            vkCmdDispatchIndirect(commands, mResolveTiles.buffer, kind * 16);
+        }
+        return true;
+    }
+
+    bool passClassify()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        // The dispatch counts start at 0; the graph's barrier before this pass covers last
+        // frame's reads, and the fill gets its own before the shader adds to it.
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdFillBuffer(commands, mResolveTiles.buffer, 0, RESOLVE_TILES_HEADER, 0);
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mClassifyPipeline);
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
         pushScene(commands);
         vkCmdDispatch(commands, (mSceneExtent.width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE,
@@ -4161,6 +4194,7 @@ private:
         mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
         mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, late), true, true); });
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
+        mGraph.setBody(PassClassify, [this]() { return passClassify(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
         mGraph.setBody(PassStars, [this]() { return passStars(); });
         mGraph.setBody(PassBloom, [this]() { return passBloom(); });
@@ -4767,6 +4801,7 @@ private:
     GpuBuffer mSceneGroups;
     GpuBuffer mSceneCounts;
     GpuBuffer mScenePyramid;
+    GpuBuffer mResolveTiles; // GpuResolveTiles, sized with the scene
     MappedBuffer mSceneCountsTemplate;
     MappedBuffer mSceneViews[FRAMES_IN_FLIGHT];
     MappedBuffer mSceneStaging[FRAMES_IN_FLIGHT];
@@ -4796,7 +4831,8 @@ private:
     VkPipeline mPyramidPipeline = VK_NULL_HANDLE;
     VkPipeline mVisibilityPipeline = VK_NULL_HANDLE;
     VkPipeline mMaskedPipeline = VK_NULL_HANDLE;
-    VkPipeline mResolvePipeline = VK_NULL_HANDLE;
+    VkPipeline mClassifyPipeline = VK_NULL_HANDLE;
+    VkPipeline mResolvePipelines[RESOLVE_KINDS] = {}; // RESOLVE_KIND_*
     VkPipeline mSkinPipeline = VK_NULL_HANDLE;
     VkPipeline mTextureMipPipeline = VK_NULL_HANDLE; // texture compression: see encodeTexture()
     VkPipeline mEncodeBC1Pipeline = VK_NULL_HANDLE;

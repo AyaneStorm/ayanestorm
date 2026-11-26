@@ -74,6 +74,7 @@ enum SceneResult : ResultId
     ResultAerialLut,      // the aerial perspective volume, along the main view's rays
     ResultExposure,      // GpuExposure, from the sky: read by shading and the composite
     ResultBloom,         // bloom's levels in one atlas, read by the composite
+    ResultResolveTiles,  // GpuResolveTiles: the resolve's tiles and dispatches by material kind
     ResultCount
 };
 
@@ -102,7 +103,8 @@ enum ScenePass : PassId
     PassSkyViewLut,
     PassAerialLut,
     PassExposure,
-    PassResolve,
+    PassClassify,      // the resolve's tiles by material kind
+    PassResolve,       // one indirect dispatch per kind
     PassStars,         // only while the sky has stars to show
     PassMacOITKeys,   // Mac OIT, declared by declareMacOIT()
     PassMacOITGate,
