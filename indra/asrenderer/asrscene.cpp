@@ -756,6 +756,7 @@ GpuSceneCounts sceneCountsTemplate()
         counts.early[list].vertexCount = vertices;
         counts.late[list].vertexCount = vertices;
         counts.shadow[list].vertexCount = vertices;
+        counts.shadowMoving[list].vertexCount = vertices;
     }
     counts.selection.vertexCount = CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3; // one draw for every size
 
