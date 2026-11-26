@@ -13,6 +13,7 @@
  *                   [--look-moon]        a still camera zoomed on the moon
  *                   [--screenshot FILE [SECONDS]] the presented frame as a PNG, at 3 s by default
  *                   [--sun-elevation DEG] after --sky: its sun at this elevation
+ *                   [--moon-elevation DEG] after --sky: its moon at this elevation
  *                   [--adaptation K]     ASRendererExposureAdaptation
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--clouds]           EEP's default 2D clouds over a made-up noise
@@ -3518,6 +3519,15 @@ int main(int argc, char** argv)
             sSky.sunDirection[0] = std::cos(elevation) * std::cos(azimuth);
             sSky.sunDirection[1] = std::cos(elevation) * std::sin(azimuth);
             sSky.sunDirection[2] = std::sin(elevation);
+        }
+        else if (arg == "--moon-elevation" && i + 1 < argc)
+        {
+            // After --sky: its moon at this elevation, in degrees, same azimuth.
+            const float elevation = std::stof(argv[++i]) * 3.14159265f / 180.f;
+            const float azimuth = std::atan2(sSky.moonDirection[1], sSky.moonDirection[0]);
+            sSky.moonDirection[0] = std::cos(elevation) * std::cos(azimuth);
+            sSky.moonDirection[1] = std::cos(elevation) * std::sin(azimuth);
+            sSky.moonDirection[2] = std::sin(elevation);
         }
         else if (arg == "--overlay")
         {
