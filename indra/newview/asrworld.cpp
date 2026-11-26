@@ -1305,15 +1305,24 @@ void setMapTransform(asr::MaterialDesc::Map& map, const asr::MaterialDesc& mater
 
 // LL's legacy lighting of a face, as OpenGL's deferred path takes it (LLVOVolume::registerFace(),
 // LLFace::getGeometryVolume(), materialF.glsl, diffuseF.glsl):
-// - a material with a specular map: its specular colour, exponent and environment intensity;
-// - a material without one: white at glossiness 0.5, no environment;
-// - no material: the shiny level (0, 0.25, 0.5, 0.75) as specular colour, glossiness and
-//   environment alike, except on alpha-masked faces (diffuseAlphaMaskF.glsl: none).
+// - every face starts from the shiny level (0, 0.25, 0.5, 0.75) as specular colour, glossiness
+//   and environment alike (LLVolumeGeometryManager::registerFace()), except alpha-masked faces
+//   without a material (diffuseAlphaMaskF.glsl: none);
+// - a material with a specular map replaces them with its specular colour, exponent and
+//   environment intensity. Without one it keeps the shiny level: LLDrawInfo's white at 0.5 is
+//   always overwritten, and taking it lit normal-mapped bark and hair like metal.
 // Fullbright faces show their colour unlit; DIFFUSE_ALPHA_MODE_EMISSIVE makes alpha a glow mask.
 void fillLegacyLighting(asr::MaterialDesc& material, LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS], LLVOVolume* volume, S32 index,
                         const LLTextureEntry* te, const LLMaterialPtr& params, U32 flags)
 {
     material.fullbright = te->getFullbright() != 0;
+    if (params.notNull() || !(flags & asr::INSTANCE_MASKED))
+    {
+        static const F32 SHININESS[4] = { 0.f, 0.25f, 0.5f, 0.75f };
+        const F32 shiny = SHININESS[te->getShiny() & 3];
+        material.specular[0] = material.specular[1] = material.specular[2] = material.specular[3] = shiny;
+        material.envIntensity = shiny;
+    }
     if (params.notNull())
     {
         material.emissiveAlpha = params->getDiffuseAlphaMode() == LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
@@ -1339,21 +1348,7 @@ void fillLegacyLighting(asr::MaterialDesc& material, LLViewerTexture* maps[asr::
             material.specular[3] = params->getSpecularLightExponent() / 255.f;
             material.envIntensity = params->getEnvironmentIntensity() / 255.f;
         }
-        else
-        {
-            material.specular[0] = material.specular[1] = material.specular[2] = 1.f;
-            material.specular[3] = 0.5f;
-        }
-        return;
     }
-    if (flags & asr::INSTANCE_MASKED)
-    {
-        return;
-    }
-    static const F32 SHININESS[4] = { 0.f, 0.25f, 0.5f, 0.75f };
-    const F32 shiny = SHININESS[te->getShiny() & 3];
-    material.specular[0] = material.specular[1] = material.specular[2] = material.specular[3] = shiny;
-    material.envIntensity = shiny;
 }
 
 bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& image, LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS], LLVOVolume* volume,
