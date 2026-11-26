@@ -31,6 +31,7 @@ layout(set = 0, binding = 0) uniform texture2D textures[65536];
 layout(set = 0, binding = 1) uniform sampler samplers[4];
 #if MACOIT_PASS == 2
 #include "asrAtmosphere.glsl" // the air in front of each layer
+#include "asrSceneLighting.glsl"
 #endif
 
 layout(location = 0) in vec2 vary_uv;
@@ -38,6 +39,9 @@ layout(location = 1) flat in uint vary_texture;
 layout(location = 2) flat in vec4 vary_color;
 layout(location = 3) in vec3 vary_normal;
 layout(location = 4) in vec3 vary_toCamera;
+layout(location = 5) flat in uint vary_material;
+layout(location = 6) in vec2 vary_faceUV;
+layout(location = 7) in vec4 vary_tangent;
 
 #if MACOIT_PASS == 2
 layout(set = 1, binding = 4, rgba32f) uniform readonly image2D macoitMoments; // optical depth * (z, z^2, z^3, z^4)
@@ -98,6 +102,24 @@ vec4 surfaceColor(out vec2 uvDx, out vec2 uvDy)
     const uint samplerIndex = (vary_texture >> 28) & 3u;
     return vary_color * texture(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]), vary_uv);
 }
+
+#if MACOIT_PASS == 2
+// One of the material's other maps, through its own UV transform, reporting its need.
+vec4 sampleMap(MaterialMap map, vec2 faceDx, vec2 faceDy)
+{
+    const vec2 uv = vec2(dot(map.uvRow0, vec3(vary_faceUV, 1.0)), dot(map.uvRow1, vec3(vary_faceUV, 1.0)));
+    const vec2 uvDx = vec2(dot(map.uvRow0.xy, faceDx), dot(map.uvRow1.xy, faceDx));
+    const vec2 uvDy = vec2(dot(map.uvRow0.xy, faceDy), dot(map.uvRow1.xy, faceDy));
+    const uint slot = map.texture & 0xFFFFFu;
+    const uint samplerIndex = (map.texture >> 28) & 3u;
+    // As main() reports the base map: not from helpers, nor from outside the view.
+    if (!gl_HelperInvocation && all(greaterThanEqual(gl_FragCoord.xy, vec2(0.0))) && all(lessThan(gl_FragCoord.xy, ViewRef(push.view).pixelSize.xy)))
+    {
+        giveFeedback(ivec2(gl_FragCoord.xy), slot, uvDx, uvDy);
+    }
+    return textureGrad(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]), uv, uvDx, uvDy);
+}
+#endif
 
 #if MACOIT_PASS == 2
 // Moment-Based Order-Independent Transparency (Muenstermann, Krumpen, Klein, Peters, 2018),
@@ -180,16 +202,37 @@ void main()
     vec2 uvDx;
     vec2 uvDy;
     vec4 color = surfaceColor(uvDx, uvDy);
-    // Lit as opaque surfaces are. A face seen from behind (two-sided) turns its normal to the
-    // camera, as the resolve does.
+#if MACOIT_PASS == 2
+    // Lit as opaque surfaces are, only here: the first two passes need alpha alone. A face seen
+    // from behind (two-sided) turns its normal to the camera, as the resolve does.
+    const Material material = MaterialsRef(push.materials).items[vary_material];
     vec3 normal = normalize(vary_normal);
     normal = dot(normal, vary_toCamera) < 0.0 ? -normal : normal;
-    color.rgb = lightSurface(color.rgb, normal);
+    const vec2 faceDx = dFdx(vary_faceUV);
+    const vec2 faceDy = dFdy(vary_faceUV);
+    vec4 normalSample = vec4(0.5, 0.5, 1.0, 1.0);
+    vec4 specularSample = vec4(1.0);
+    if ((material.flags & MATERIAL_FLAG_NORMAL_MAP) != 0u)
+    {
+        normalSample = sampleMap(material.maps[MATERIAL_MAP_NORMAL], faceDx, faceDy);
+        normal = applyNormalMap(normal, vary_tangent.xyz, vary_tangent.w, normalSample.xyz * 2.0 - 1.0);
+    }
+    if ((material.flags & MATERIAL_FLAG_SPECULAR_MAP) != 0u)
+    {
+        specularSample = sampleMap(material.maps[MATERIAL_MAP_SPECULAR], faceDx, faceDy);
+    }
+    LegacySurface surface;
+    surface.diffuse = color;
+    surface.normal = normal;
+    surface.specular = srgbToLinear(specularSample.rgb * material.specular.rgb);
+    surface.glossiness = material.specular.a * normalSample.a;
+    surface.envIntensity = material.envIntensity * specularSample.a;
+    surface.emissive = (material.flags & MATERIAL_FLAG_FULLBRIGHT) != 0u ? 1.0 : 0.0; // blended: alpha is cover, never a mask
+    color.rgb = shadeLegacy(loadAtmosphere(ViewRef(push.view).atmosphere), surface, normalize(vary_toCamera));
     if (ViewRef(push.view).debugView == DEBUG_VIEW_ALPHA_MODE)
     {
         color.rgb = vec3(0.9, 0.1, 0.1); // blended, at its own alpha
     }
-#if MACOIT_PASS == 2
     else
     {
         // The layer's own air: the weights then count it at the layer's alpha, as the

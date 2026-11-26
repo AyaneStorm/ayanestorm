@@ -168,6 +168,14 @@ struct ClusterGroup
     uint unused[5];
 };
 
+struct MaterialMap
+{
+    vec3 uvRow0;
+    uint texture;
+    vec3 uvRow1;
+    float unused;
+};
+
 struct Material
 {
     vec4 color;
@@ -178,8 +186,20 @@ struct Material
     vec3 planarScale;
     uint mapping; // MATERIAL_*
     vec3 planarOffset;
-    uint unused;
+    uint flags;   // MATERIAL_FLAG_*
+    MaterialMap maps[3]; // MATERIAL_MAP_*
+    vec4 specular;       // legacy: sRGB colour and glossiness
+    float envIntensity;  // legacy
+    float unused2[3];
 };
+
+const uint MATERIAL_MAP_NORMAL = 0u;
+const uint MATERIAL_MAP_SPECULAR = 1u;
+const uint MATERIAL_MAP_EMISSIVE = 2u;
+const uint MATERIAL_FLAG_NORMAL_MAP = 1u;
+const uint MATERIAL_FLAG_SPECULAR_MAP = 2u;
+const uint MATERIAL_FLAG_FULLBRIGHT = 4u;
+const uint MATERIAL_FLAG_EMISSIVE_ALPHA = 8u;
 
 const uint MATERIAL_FACE_UV = 0u;
 const uint MATERIAL_PLANAR = 1u;

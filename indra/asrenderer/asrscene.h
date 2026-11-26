@@ -409,9 +409,30 @@ struct GpuMaterial
     float planarScale[3];  // planar mapping: packed position to scaled object position; terrain: to region metres
     uint32_t mapping;      // MATERIAL_*: where UVs come from
     float planarOffset[3];
-    uint32_t unused;
+    uint32_t flags;        // MATERIAL_FLAG_*
+    // The other maps, MATERIAL_MAP_*: each its own texture and UV transform from face UVs.
+    struct Map
+    {
+        float uvRow0[3];
+        uint32_t texture; // see uiTextureBits(); used only with its MATERIAL_FLAG_*
+        float uvRow1[3];
+        float unused;
+    } maps[3];
+    float specular[4]; // legacy: specular colour, sRGB, and glossiness (exponent / 255)
+    float envIntensity; // legacy: environment reflection, 0 to 1
+    float unused2[3];
 };
-static_assert(sizeof(GpuMaterial) == 80, "shaders read this layout");
+static_assert(sizeof(GpuMaterial) == 208, "shaders read this layout");
+
+constexpr uint32_t MATERIAL_MAP_NORMAL = 0;
+constexpr uint32_t MATERIAL_MAP_SPECULAR = 1; // legacy specular; PBR's ORM
+constexpr uint32_t MATERIAL_MAP_EMISSIVE = 2; // PBR
+constexpr uint32_t MATERIAL_EXTRA_MAPS = 3;
+
+constexpr uint32_t MATERIAL_FLAG_NORMAL_MAP = 1;
+constexpr uint32_t MATERIAL_FLAG_SPECULAR_MAP = 2;
+constexpr uint32_t MATERIAL_FLAG_FULLBRIGHT = 4;     // shown as its colour, unlit
+constexpr uint32_t MATERIAL_FLAG_EMISSIVE_ALPHA = 8; // legacy: the diffuse alpha is an emissive mask
 
 constexpr uint32_t MATERIAL_FACE_UV = 0; // the face's own UVs
 constexpr uint32_t MATERIAL_PLANAR = 1;  // from position and normal, as the viewer's planar mapping
@@ -895,6 +916,18 @@ struct MaterialDesc
 
     // With TEXTURE_ANIM_ON, uvRow0 and uvRow1 are animated from this instead.
     TextureAnimDesc anim;
+
+    // Lighting. A map is used when its texture is not 0.
+    struct Map
+    {
+        uint32_t texture = 0;
+        float uvRow0[3] = { 1.f, 0.f, 0.f };
+        float uvRow1[3] = { 0.f, 1.f, 0.f };
+    } maps[MATERIAL_EXTRA_MAPS];
+    float specular[4] = { 0.f, 0.f, 0.f, 0.f }; // legacy: sRGB colour and glossiness, 0 to 1
+    float envIntensity = 0.f;
+    bool fullbright = false;
+    bool emissiveAlpha = false; // legacy DIFFUSE_ALPHA_MODE_EMISSIVE
 };
 
 struct TerrainLayerDesc

@@ -58,7 +58,8 @@ inline asr::SceneVertex vertexAt(float x, float y, float z, float nx, float ny, 
     vertex.normal[0] = nx;
     vertex.normal[1] = ny;
     vertex.normal[2] = nz;
-    vertex.tangent[0] = 1.f;
+    // Across the normal, for normal maps: x, or y on faces turned along x.
+    vertex.tangent[std::fabs(nx) > 0.9f ? 1 : 0] = 1.f;
     vertex.tangent[3] = 1.f;
     vertex.uv[0] = u;
     vertex.uv[1] = v;
@@ -357,6 +358,27 @@ public:
             }
             material.uvRow0[0] = 1.f + float(i % 3);
             material.uvRow1[1] = 1.f + float(i % 3);
+            // LL's legacy materials, one kind in turn (the ground, 0, stays plain): a normal map
+            // with a glossy highlight, an environment shine (shiny), fullbright.
+            if (i != 0)
+            {
+                switch (i % 4)
+                {
+                case 1:
+                    material.maps[asr::MATERIAL_MAP_NORMAL].texture = normalTiles(textures);
+                    material.specular[0] = material.specular[1] = material.specular[2] = 1.f;
+                    material.specular[3] = 0.6f;
+                    break;
+                case 2:
+                    material.envIntensity = 0.5f; // shiny 2
+                    break;
+                case 3:
+                    material.fullbright = i == 3;
+                    break;
+                default:
+                    break;
+                }
+            }
             mMaterials[i] = scene.addMaterial(material);
         }
 
@@ -860,6 +882,45 @@ private:
     }
 
     // Like the viewer's alpha ramp: full at 0, gone at 1, along u.
+    // A tangent-space normal map of domed tiles, made once: 8 by 8 domes over 256 pixels.
+    uint32_t normalTiles(asr::TextureQueue& textures)
+    {
+        if (mNormalTiles != 0)
+        {
+            return mNormalTiles;
+        }
+        constexpr uint32_t SIZE = 256;
+        constexpr float CELL = 32.f;
+        asr::TextureDesc desc;
+        desc.width = SIZE;
+        desc.height = SIZE;
+        desc.mipLevels = 9;
+        std::vector<uint32_t> pixels(SIZE * SIZE);
+        for (uint32_t y = 0; y < SIZE; ++y)
+        {
+            for (uint32_t x = 0; x < SIZE; ++x)
+            {
+                const float u = std::fmod(float(x) + 0.5f, CELL) / CELL * 2.f - 1.f;
+                const float v = std::fmod(float(y) + 0.5f, CELL) / CELL * 2.f - 1.f;
+                const float r2 = u * u + v * v;
+                float nx = 0.f;
+                float ny = 0.f;
+                if (r2 < 0.8f)
+                {
+                    nx = u * 0.8f;
+                    ny = v * 0.8f;
+                }
+                const float nz = std::sqrt(std::max(1.f - nx * nx - ny * ny, 0.f));
+                const auto byte = [](float c) { return uint32_t(std::lround((c * 0.5f + 0.5f) * 255.f)); };
+                pixels[y * SIZE + x] = 0xFF000000u | (byte(nz) << 16) | (byte(ny) << 8) | byte(nx);
+            }
+        }
+        mNormalTiles = textures.create(desc);
+        textures.upload(mNormalTiles, 0, 0, 0, SIZE, SIZE, pixels.data(), pixels.size() * sizeof(uint32_t));
+        textures.generateMips(mNormalTiles);
+        return mNormalTiles;
+    }
+
     static uint32_t ramp(asr::TextureQueue& textures)
     {
         constexpr uint32_t WIDTH = 64;
@@ -903,6 +964,7 @@ private:
     bool mStreet;
     uint32_t mFence = 0;
     uint32_t mGroundTexture = 0;
+    uint32_t mNormalTiles = 0; // normalTiles()
     uint32_t mBoxFaces[6]{};
     uint32_t mSphere = 0;
     uint32_t mKnot = 0;

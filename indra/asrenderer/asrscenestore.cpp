@@ -355,6 +355,18 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     material.mapping = command.desc.terrain != 0 ? MATERIAL_TERRAIN : command.desc.planar ? MATERIAL_PLANAR : MATERIAL_FACE_UV;
     memcpy(material.planarScale, command.desc.planarScale, sizeof(material.planarScale));
     memcpy(material.planarOffset, command.desc.planarOffset, sizeof(material.planarOffset));
+    for (uint32_t i = 0; i < MATERIAL_EXTRA_MAPS; ++i)
+    {
+        const MaterialDesc::Map& map = command.desc.maps[i];
+        memcpy(material.maps[i].uvRow0, map.uvRow0, sizeof(map.uvRow0));
+        memcpy(material.maps[i].uvRow1, map.uvRow1, sizeof(map.uvRow1));
+        material.maps[i].texture = map.texture;
+    }
+    material.flags = (command.desc.maps[MATERIAL_MAP_NORMAL].texture != 0 ? MATERIAL_FLAG_NORMAL_MAP : 0) |
+                     (command.desc.maps[MATERIAL_MAP_SPECULAR].texture != 0 ? MATERIAL_FLAG_SPECULAR_MAP : 0) |
+                     (command.desc.fullbright ? MATERIAL_FLAG_FULLBRIGHT : 0) | (command.desc.emissiveAlpha ? MATERIAL_FLAG_EMISSIVE_ALPHA : 0);
+    memcpy(material.specular, command.desc.specular, sizeof(material.specular));
+    material.envIntensity = command.desc.envIntensity;
     const bool animated = (command.desc.anim.mode & TEXTURE_ANIM_ON) != 0 && command.desc.terrain == 0;
     setAnimated(command.id, animated ? &material : nullptr, command.desc.anim);
     writeEntry(SceneTable::Materials, command.id, &material, sizeof(material));

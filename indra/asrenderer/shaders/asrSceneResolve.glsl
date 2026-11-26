@@ -20,6 +20,7 @@ layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D normals;
 layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
 #include "asrAtmosphere.glsl"
 #include "asrSkyClouds.glsl"
+#include "asrSceneLighting.glsl"
 
 vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy); // below
 
@@ -445,6 +446,15 @@ vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy)
     return textureGrad(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(sampler_index)]), uv, uvDx, uvDy);
 }
 
+// One of a material's other maps, through its own UV transform from the face's UVs.
+vec4 sampleMap(ivec2 pixel, MaterialMap map, vec2 faceUV, vec2 faceDx, vec2 faceDy)
+{
+    const vec2 uv = vec2(dot(map.uvRow0, vec3(faceUV, 1.0)), dot(map.uvRow1, vec3(faceUV, 1.0)));
+    const vec2 uvDx = vec2(dot(map.uvRow0.xy, faceDx), dot(map.uvRow1.xy, faceDx));
+    const vec2 uvDy = vec2(dot(map.uvRow0.xy, faceDy), dot(map.uvRow1.xy, faceDy));
+    return sampleBits(pixel, map.texture, uv, uvDx, uvDy);
+}
+
 // A terrain layer through its matrix, from a pair of region coordinates and their steps.
 vec4 sampleLayer(ivec2 pixel, TerrainLayer layer, vec2 at, vec2 atDx, vec2 atDy)
 {
@@ -648,6 +658,8 @@ void main()
     const vec3 objectNormal = mat3(n0, n1, n2) * bary.weights;
 
     vec4 color;
+    vec4 normalSample = vec4(0.5, 0.5, 1.0, 1.0); // a flat normal map, glossiness kept
+    vec4 specularSample = vec4(1.0);            // no specular map: white
 #if RESOLVE_KIND == 2 // RESOLVE_KIND_TERRAIN
     {
         // Ground: its position in region metres places the layers, and its UVs blend them.
@@ -676,6 +688,14 @@ void main()
         const vec2 uvDx = vec2(dot(material.uvRow0.xy, faceDx), dot(material.uvRow1.xy, faceDx));
         const vec2 uvDy = vec2(dot(material.uvRow0.xy, faceDy), dot(material.uvRow1.xy, faceDy));
         color = material.color * sampleBits(pixel, material.texture, uv, uvDx, uvDy);
+        if ((material.flags & MATERIAL_FLAG_NORMAL_MAP) != 0u)
+        {
+            normalSample = sampleMap(pixel, material.maps[MATERIAL_MAP_NORMAL], faceUV, faceDx, faceDy);
+        }
+        if ((material.flags & MATERIAL_FLAG_SPECULAR_MAP) != 0u)
+        {
+            specularSample = sampleMap(pixel, material.maps[MATERIAL_MAP_SPECULAR], faceUV, faceDx, faceDy);
+        }
     }
 #endif
 
@@ -695,10 +715,46 @@ void main()
         }
     }
 
-    imageStore(normals, pixel, vec4(worldNormal, 1.0));
+    const Atmosphere atmosphere = loadAtmosphere(view.atmosphere);
+    const vec3 surfacePoint = world * bary.weights;
+#if RESOLVE_KIND == 2 // RESOLVE_KIND_TERRAIN
     vec4 shown = shadeSurface(color.rgb, worldNormal);
-    shown.rgb = applyAerial(loadAtmosphere(view.atmosphere), shown.rgb, (vec2(pixel) + 0.5) * view.pixelSize.zw,
-                            distance(world * bary.weights, view.camera.xyz));
+#else
+    if ((material.flags & MATERIAL_FLAG_NORMAL_MAP) != 0u)
+    {
+        // The tangent: octahedral like the normal, its handedness in the low bit of y.
+        const uvec3 tangentWords = uvec3(attributes.words[base.x + 1u], attributes.words[base.y + 1u], attributes.words[base.z + 1u]);
+        vec3 t0 = attributeNormal(tangentWords.x);
+        vec3 t1 = attributeNormal(tangentWords.y);
+        vec3 t2 = attributeNormal(tangentWords.z);
+        if (skinned)
+        {
+            const Binding binding = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding];
+            t0 = skinNormal(view, binding, i0, t0);
+            t1 = skinNormal(view, binding, i1, t1);
+            t2 = skinNormal(view, binding, i2, t2);
+        }
+        const vec3 objectTangent = mat3(t0, t1, t2) * bary.weights;
+        const vec3 worldTangent = vec3(dot(instance.rows[0].xyz, objectTangent), dot(instance.rows[1].xyz, objectTangent),
+                                       dot(instance.rows[2].xyz, objectTangent));
+        float handedness = (tangentWords.x & 0x10000u) != 0u ? -1.0 : 1.0;
+        handedness = (instance.flags & INSTANCE_FLIPPED) != 0u ? -handedness : handedness;
+        worldNormal = applyNormalMap(worldNormal, worldTangent, handedness, normalSample.xyz * 2.0 - 1.0);
+    }
+    // materialF.glsl: the specular map times the specular colour; its alpha scales the
+    // environment, the normal map's alpha the glossiness.
+    LegacySurface surface;
+    surface.diffuse = color;
+    surface.normal = worldNormal;
+    surface.specular = srgbToLinear(specularSample.rgb * material.specular.rgb);
+    surface.glossiness = material.specular.a * normalSample.a;
+    surface.envIntensity = material.envIntensity * specularSample.a;
+    surface.emissive = (material.flags & MATERIAL_FLAG_FULLBRIGHT) != 0u ? 1.0
+                     : (material.flags & MATERIAL_FLAG_EMISSIVE_ALPHA) != 0u ? color.a : 0.0;
+    vec4 shown = vec4(shadeLegacy(atmosphere, surface, normalize(view.camera.xyz - surfacePoint)), 0.0);
+#endif
+    imageStore(normals, pixel, vec4(worldNormal, 1.0));
+    shown.rgb = applyAerial(atmosphere, shown.rgb, (vec2(pixel) + 0.5) * view.pixelSize.zw, distance(surfacePoint, view.camera.xyz));
     if (view.debugView == DEBUG_VIEW_NORMALS)
     {
         shown = vec4(worldNormal * 0.5 + 0.5, 1.0);

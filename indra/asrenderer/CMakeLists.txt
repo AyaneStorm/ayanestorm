@@ -125,6 +125,11 @@ foreach(shader asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrai
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneResolve.glsl)
 endforeach()
+# Surface shading, shared by the resolve and Mac OIT's colour pass.
+foreach(shader asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSceneMacOITColorF)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneLighting.glsl)
+endforeach()
 # The sky's tables, the resolve and Mac OIT's passes (through asrSceneMacOIT.glsl) share the atmosphere functions.
 foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
         asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF

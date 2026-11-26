@@ -14,6 +14,9 @@ layout(location = 1) flat out uint vary_texture;
 layout(location = 2) flat out vec4 vary_color;
 layout(location = 3) out vec3 vary_normal;   // world
 layout(location = 4) out vec3 vary_toCamera; // world, for two-sided faces
+layout(location = 5) flat out uint vary_material;
+layout(location = 6) out vec2 vary_faceUV;    // before the material's transforms: its other maps take their own
+layout(location = 7) out vec4 vary_tangent;   // world; w: the bitangent's sign
 
 void main()
 {
@@ -27,6 +30,9 @@ void main()
     vary_color = vec4(0.0);
     vary_normal = vec3(0.0, 0.0, 1.0);
     vary_toCamera = vec3(0.0, 0.0, 1.0);
+    vary_material = 0u;
+    vary_faceUV = vec2(0.0);
+    vary_tangent = vec4(1.0, 0.0, 0.0, 1.0);
     if (triangle >= cluster.triangles)
     {
         gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
@@ -49,17 +55,26 @@ void main()
     WordsRef attributes = WordsRef(cluster.attributes);
     // Lit as the resolve lights opaque surfaces: skinned normals turn with the palette.
     vec3 objectNormal = attributeNormal(attributes.words[vertex * 4u]);
+    const uint tangentWord = attributes.words[vertex * 4u + 1u];
+    vec3 objectTangent = attributeNormal(tangentWord);
     if ((instance.flags & INSTANCE_SKINNED) != 0u)
     {
         const Binding binding = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding];
         objectNormal = skinNormal(view, binding, vertex, objectNormal);
+        objectTangent = skinNormal(view, binding, vertex, objectTangent);
     }
     vary_normal = worldNormalOf(instance, objectNormal);
+    // As the resolve: the tangent goes with the instance rows, a flipped instance swaps the bitangent.
+    const float handedness = ((tangentWord & 0x10000u) != 0u) != ((instance.flags & INSTANCE_FLIPPED) != 0u) ? -1.0 : 1.0;
+    vary_tangent = vec4(dot(instance.rows[0].xyz, objectTangent), dot(instance.rows[1].xyz, objectTangent), dot(instance.rows[2].xyz, objectTangent),
+                        handedness);
+    vary_material = instance.material;
     vec2 faceUV = vec2(uintBitsToFloat(attributes.words[vertex * 4u + 2u]), uintBitsToFloat(attributes.words[vertex * 4u + 3u]));
     if (material.mapping == MATERIAL_PLANAR)
     {
         faceUV = planarUV(attributeNormal(attributes.words[vertex * 4u]), packed * material.planarScale + material.planarOffset);
     }
+    vary_faceUV = faceUV;
     vary_uv = vec2(dot(material.uvRow0, vec3(faceUV, 1.0)), dot(material.uvRow1, vec3(faceUV, 1.0)));
     vary_texture = material.texture;
     vary_color = material.color;

@@ -237,14 +237,16 @@ struct TrackedTexture
 // What makes two materials one. The slot is not part of it: it follows the image.
 struct MaterialKey
 {
-    F32 values[17];
+    F32 values[40];
     U32 planar;
+    U32 lighting; // fullbright | emissive alpha << 1
     const LLViewerTexture* image;
+    const LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS];
     asr::TextureAnimDesc anim;
 
     bool operator==(const MaterialKey& other) const { return memcmp(this, &other, sizeof(MaterialKey)) == 0; }
 };
-static_assert(sizeof(MaterialKey) == 136, "compared and hashed as bytes, so it has no padding");
+static_assert(sizeof(MaterialKey) == 256, "compared and hashed as bytes, so it has no padding");
 
 } // namespace
 
@@ -254,6 +256,7 @@ struct ASRSharedMaterial
     U32 users = 0; // faces
     asr::MaterialDesc desc;
     TrackedTexture* texture = nullptr;
+    TrackedTexture* maps[asr::MATERIAL_EXTRA_MAPS] = {}; // asr::MATERIAL_MAP_*
 };
 
 namespace
@@ -935,7 +938,7 @@ void releaseTexture(TrackedTexture* texture, LLDrawable* drawable, bool eye)
     forgetUnusedTexture(texture);
 }
 
-MaterialKey materialKey(const asr::MaterialDesc& desc, const LLViewerTexture* image)
+MaterialKey materialKey(const asr::MaterialDesc& desc, const LLViewerTexture* image, const LLViewerTexture* const maps[asr::MATERIAL_EXTRA_MAPS])
 {
     MaterialKey key;
     F32* value = key.values;
@@ -950,10 +953,30 @@ MaterialKey materialKey(const asr::MaterialDesc& desc, const LLViewerTexture* im
     add(&desc.alphaCutoff, 1);
     add(desc.planarScale, 3);
     add(desc.planarOffset, 3);
+    for (const asr::MaterialDesc::Map& map : desc.maps)
+    {
+        add(map.uvRow0, 3);
+        add(map.uvRow1, 3);
+    }
+    add(desc.specular, 4);
+    add(&desc.envIntensity, 1);
+    llassert(value == key.values + LL_ARRAY_SIZE(key.values));
     key.planar = desc.planar ? 1 : 0;
+    key.lighting = (desc.fullbright ? 1 : 0) | (desc.emissiveAlpha ? 2 : 0);
     key.image = image;
+    for (U32 i = 0; i < asr::MATERIAL_EXTRA_MAPS; ++i)
+    {
+        key.maps[i] = maps ? maps[i] : nullptr;
+    }
     key.anim = desc.anim;
     return key;
+}
+
+// A map's bits: 0, so unused, until its texture has an image. The viewer's default image stands
+// in for a face's colour while it loads, but would make a wrong normal or specular map.
+U32 mapBits(const TrackedTexture* texture)
+{
+    return texture && texture->slot != 0 ? asr::uiTextureBits(texture->slot, asr::UISampler::LinearWrap) : 0;
 }
 
 // Where the viewer's default image is, which is what a face shows until its own texture
@@ -972,53 +995,96 @@ U32 textureBits(const TrackedTexture* texture)
     return asr::uiTextureBits(slot, asr::UISampler::LinearWrap);
 }
 
+// A material's texture bits from its tracked textures, whichever of them changed.
+void setTextureBits(SharedMaterial& material)
+{
+    material.desc.texture = textureBits(material.texture);
+    for (U32 i = 0; i < asr::MATERIAL_EXTRA_MAPS; ++i)
+    {
+        material.desc.maps[i].texture = mapBits(material.maps[i]);
+    }
+}
+
 void writeMaterials(const TrackedTexture& texture)
 {
     for (SharedMaterial* material : texture.materials)
     {
-        material->desc.texture = textureBits(&texture);
+        setTextureBits(*material);
         sScene->setMaterial(material->id, material->desc);
     }
 }
 
-SharedMaterial* useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* image, LLDrawable* drawable, bool eye = false)
+// A material appears in each of its textures' lists once per use, so the same texture as
+// colour and as a map is listed twice, and released twice.
+SharedMaterial* useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* image, LLViewerTexture* const maps[asr::MATERIAL_EXTRA_MAPS], LLDrawable* drawable,
+                            bool eye = false)
 {
     TrackedTexture* texture = image ? useTexture(image, drawable, eye) : nullptr;
-    const MaterialKey key = materialKey(desc, image);
+    TrackedTexture* mapTextures[asr::MATERIAL_EXTRA_MAPS] = {};
+    for (U32 i = 0; i < asr::MATERIAL_EXTRA_MAPS; ++i)
+    {
+        mapTextures[i] = maps && maps[i] ? useTexture(maps[i], drawable, eye) : nullptr;
+    }
+    const MaterialKey key = materialKey(desc, image, maps);
     auto found = sMaterials.find(key);
     if (found == sMaterials.end())
     {
         found = sMaterials.emplace(key, SharedMaterial()).first;
         SharedMaterial& material = found->second;
         material.desc = desc;
-        material.desc.texture = textureBits(texture);
         material.texture = texture;
+        std::copy(mapTextures, mapTextures + asr::MATERIAL_EXTRA_MAPS, material.maps);
+        setTextureBits(material);
         material.id = sScene->addMaterial(material.desc);
         if (texture)
         {
             texture->materials.push_back(&material);
+        }
+        for (TrackedTexture* map : material.maps)
+        {
+            if (map)
+            {
+                map->materials.push_back(&material);
+            }
         }
     }
     ++found->second.users;
     return &found->second;
 }
 
+SharedMaterial* useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* image, LLDrawable* drawable, bool eye = false)
+{
+    return useMaterial(desc, image, nullptr, drawable, eye);
+}
+
 void releaseMaterial(SharedMaterial* material, LLDrawable* drawable, bool eye = false)
 {
-    TrackedTexture* texture = material->texture;
+    TrackedTexture* textures[1 + asr::MATERIAL_EXTRA_MAPS] = { material->texture };
+    std::copy(material->maps, material->maps + asr::MATERIAL_EXTRA_MAPS, textures + 1);
     if (--material->users == 0)
     {
         sScene->removeMaterial(material->id);
+        const LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS] = {};
+        for (U32 i = 0; i < asr::MATERIAL_EXTRA_MAPS; ++i)
+        {
+            maps[i] = material->maps[i] ? material->maps[i]->image.get() : nullptr;
+        }
+        for (TrackedTexture* texture : textures)
+        {
+            if (texture)
+            {
+                auto& materials = texture->materials;
+                materials.erase(std::find(materials.begin(), materials.end(), material));
+            }
+        }
+        sMaterials.erase(materialKey(material->desc, material->texture ? material->texture->image.get() : nullptr, maps));
+    }
+    for (TrackedTexture* texture : textures)
+    {
         if (texture)
         {
-            auto& materials = texture->materials;
-            materials.erase(std::find(materials.begin(), materials.end(), material));
+            releaseTexture(texture, drawable, eye);
         }
-        sMaterials.erase(materialKey(material->desc, texture ? texture->image.get() : nullptr));
-    }
-    if (texture)
-    {
-        releaseTexture(texture, drawable, eye);
     }
 }
 
@@ -1224,7 +1290,74 @@ void setBlended(U32& flags, asr::MaterialDesc& material)
     flags |= asr::INSTANCE_BLENDED;
 }
 
-bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& image, LLVOVolume* volume, S32 index, const asr::GeometryBox& box)
+// A legacy map's UV transform, as LLFace::getGeometryVolume() makes it: the material's own
+// rotation, offset and repeats in the diffuse formula; under texture animation, the face's.
+void setMapTransform(asr::MaterialDesc::Map& map, const asr::MaterialDesc& material, F32 rotation, F32 offsetS, F32 offsetT, F32 repeatS, F32 repeatT)
+{
+    if (material.anim.mode & asr::TEXTURE_ANIM_ON)
+    {
+        memcpy(map.uvRow0, material.uvRow0, sizeof(map.uvRow0));
+        memcpy(map.uvRow1, material.uvRow1, sizeof(map.uvRow1));
+        return;
+    }
+    asr::uvTransformRows(cosf(rotation), sinf(rotation), repeatS, repeatT, offsetS, offsetT, map.uvRow0, map.uvRow1);
+}
+
+// LL's legacy lighting of a face, as OpenGL's deferred path takes it (LLVOVolume::registerFace(),
+// LLFace::getGeometryVolume(), materialF.glsl, diffuseF.glsl):
+// - a material with a specular map: its specular colour, exponent and environment intensity;
+// - a material without one: white at glossiness 0.5, no environment;
+// - no material: the shiny level (0, 0.25, 0.5, 0.75) as specular colour, glossiness and
+//   environment alike, except on alpha-masked faces (diffuseAlphaMaskF.glsl: none).
+// Fullbright faces show their colour unlit; DIFFUSE_ALPHA_MODE_EMISSIVE makes alpha a glow mask.
+void fillLegacyLighting(asr::MaterialDesc& material, LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS], LLVOVolume* volume, S32 index,
+                        const LLTextureEntry* te, const LLMaterialPtr& params, U32 flags)
+{
+    material.fullbright = te->getFullbright() != 0;
+    if (params.notNull())
+    {
+        material.emissiveAlpha = params->getDiffuseAlphaMode() == LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
+        if (params->getNormalID().notNull())
+        {
+            maps[asr::MATERIAL_MAP_NORMAL] = volume->getTENormalMap(U8(index));
+            F32 offsetS, offsetT, repeatS, repeatT;
+            params->getNormalOffset(offsetS, offsetT);
+            params->getNormalRepeat(repeatS, repeatT);
+            setMapTransform(material.maps[asr::MATERIAL_MAP_NORMAL], material, params->getNormalRotation(), offsetS, offsetT, repeatS, repeatT);
+        }
+        if (params->getSpecularID().notNull())
+        {
+            maps[asr::MATERIAL_MAP_SPECULAR] = volume->getTESpecularMap(U8(index));
+            F32 offsetS, offsetT, repeatS, repeatT;
+            params->getSpecularOffset(offsetS, offsetT);
+            params->getSpecularRepeat(repeatS, repeatT);
+            setMapTransform(material.maps[asr::MATERIAL_MAP_SPECULAR], material, params->getSpecularRotation(), offsetS, offsetT, repeatS, repeatT);
+            const LLColor4U& color = params->getSpecularLightColor();
+            material.specular[0] = color.mV[0] / 255.f;
+            material.specular[1] = color.mV[1] / 255.f;
+            material.specular[2] = color.mV[2] / 255.f;
+            material.specular[3] = params->getSpecularLightExponent() / 255.f;
+            material.envIntensity = params->getEnvironmentIntensity() / 255.f;
+        }
+        else
+        {
+            material.specular[0] = material.specular[1] = material.specular[2] = 1.f;
+            material.specular[3] = 0.5f;
+        }
+        return;
+    }
+    if (flags & asr::INSTANCE_MASKED)
+    {
+        return;
+    }
+    static const F32 SHININESS[4] = { 0.f, 0.25f, 0.5f, 0.75f };
+    const F32 shiny = SHININESS[te->getShiny() & 3];
+    material.specular[0] = material.specular[1] = material.specular[2] = material.specular[3] = shiny;
+    material.envIntensity = shiny;
+}
+
+bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& image, LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS], LLVOVolume* volume,
+                  S32 index, const asr::GeometryBox& box)
 {
     const LLTextureEntry* te = volume->getTE(index);
     if (!te)
@@ -1234,6 +1367,10 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
 
     flags = 0;
     image = nullptr;
+    for (U32 i = 0; i < asr::MATERIAL_EXTRA_MAPS; ++i)
+    {
+        maps[i] = nullptr;
+    }
     LLFetchedGLTFMaterial* gltf = static_cast<LLFetchedGLTFMaterial*>(te->getGLTFRenderMaterial());
     if (gltf)
     {
@@ -1311,6 +1448,8 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
                 material.planarOffset[axis] = box.center[axis] * scale.mV[axis];
             }
         }
+
+        fillLegacyLighting(material, maps, volume, index, te, params, flags);
     }
 
     // A surface that is fully transparent is there to be clicked, not seen.
@@ -2529,8 +2668,9 @@ void applyObject(LLDrawable* drawable)
         ObjectFace& face = object.faces[i];
         asr::MaterialDesc material;
         LLViewerTexture* image = nullptr;
+        LLViewerTexture* maps[asr::MATERIAL_EXTRA_MAPS] = {};
         U32 flags = 0;
-        if (shape.faces[i].finest == 0 || !skinnable(shape.faces[i], object) || !fillMaterial(material, flags, image, volume, S32(i), shape.faces[i].box))
+        if (shape.faces[i].finest == 0 || !skinnable(shape.faces[i], object) || !fillMaterial(material, flags, image, maps, volume, S32(i), shape.faces[i].box))
         {
             clearFace(face, drawable);
             continue;
@@ -2539,7 +2679,7 @@ void applyObject(LLDrawable* drawable)
         // The new one comes first, so a material that stays is not made again, and the
         // old one goes last, so no instance is left pointing at it.
         SharedMaterial* previous = face.material;
-        face.material = useMaterial(material, image, drawable);
+        face.material = useMaterial(material, image, maps, drawable);
         face.flags = flags | (volume->isHUDAttachment() ? asr::INSTANCE_HUD : 0) | selectionFlags(drawable, S32(i));
         face.tieRank = object.skinnedLod >= 0 ? U32(llmin(i, size_t(7))) : tieRankOf(drawable->getVObj()->getID(), i);
         writeFace(face, shape.faces[i], desc, object.skinnedLod, hiddenSelf(object));
