@@ -119,11 +119,18 @@ bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyI
     } maps[2] = { { "moon_albedo.rgba", 2048, 1024, &sky.moonTexture }, { "moon_normal.rgba", 2048, 1024, &sky.moonNormalTexture } };
     for (const auto& map : maps)
     {
-        const std::vector<uint8_t> pixels = readFile(dir + "/" + map.name);
-        if (pixels.size() != size_t(map.width) * map.height * 4)
+        const std::vector<uint8_t> file = readFile(dir + "/" + map.name);
+        if (file.size() != size_t(map.width) * map.height * 4)
         {
             fprintf(stderr, "--moon-maps: %s/%s is missing or not %u x %u RGBA\n", dir.c_str(), map.name, map.width, map.height);
             return false;
+        }
+        // Bottom row first, as the viewer stores images (LLPngWrapper) and the shader reads them.
+        const size_t row = size_t(map.width) * 4;
+        std::vector<uint8_t> pixels(file.size());
+        for (uint32_t y = 0; y < map.height; ++y)
+        {
+            std::copy_n(file.data() + (map.height - 1 - y) * row, row, pixels.data() + y * row);
         }
         asr::TextureDesc desc;
         desc.width = map.width;
@@ -3384,6 +3391,10 @@ int main(int argc, char** argv)
                 fprintf(stderr, "--sky takes earth, noon, sunset, night, high, haze, fog or starley\n");
                 return 1;
             }
+        }
+        else if (arg == "--adaptation" && i + 1 < argc)
+        {
+            sTone.adaptation = std::stof(argv[++i]); // ASRendererExposureAdaptation
         }
         else if (arg == "--sun-elevation" && i + 1 < argc)
         {

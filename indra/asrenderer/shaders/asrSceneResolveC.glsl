@@ -86,7 +86,7 @@ vec3 moonFaceColor(Atmosphere a)
 vec2 moonUV(vec3 point, vec3 right, vec3 up, vec3 toViewer)
 {
     return vec2(atan(dot(point, right), dot(point, toViewer)) / (2.0 * ATMOSPHERE_PI) + 0.5,
-                0.5 - asin(clamp(dot(point, up), -1.0, 1.0)) / ATMOSPHERE_PI);
+                0.5 + asin(clamp(dot(point, up), -1.0, 1.0)) / ATMOSPHERE_PI);
 }
 
 // The relief's shadow at a point of the moon: 1 lit, 0 in shadow. From the point, a ray goes
@@ -162,9 +162,11 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     const vec3 normal = onDisc.x * right + onDisc.y * up + sqrt(max(1.0 - dot(onDisc, onDisc), 0.0)) * toViewer;
 
     // Longitude grows to the viewer's right (east, as the moon is mapped), latitude north.
+    // Rows go from the south: viewer images are stored bottom-up (LLPngWrapper), as the
+    // Milky Way's map reads them; north at the first row turned the moon upside down.
     const float longitude = atan(dot(normal, right), dot(normal, toViewer));
     const float latitude = asin(clamp(dot(normal, up), -1.0, 1.0));
-    const vec2 uv = vec2(longitude / (2.0 * ATMOSPHERE_PI) + 0.5, 0.5 - latitude / ATMOSPHERE_PI);
+    const vec2 uv = vec2(longitude / (2.0 * ATMOSPHERE_PI) + 0.5, 0.5 + latitude / ATMOSPHERE_PI);
     // A pixel spans pixelAngle / radius radians of the sphere at the disc's centre.
     const float arc = pixelAngle / a.moonAngularRadius;
     // Towards the limb a pixel stretches over 1 / cos of the sphere, and longitude widens
