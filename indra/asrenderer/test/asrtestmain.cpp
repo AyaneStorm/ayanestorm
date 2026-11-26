@@ -21,6 +21,7 @@
  *                   [--exposure K]       RenderExposure, to lift a faint sky into view
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--clouds]           EEP's default 2D clouds over a made-up noise
+ *                   [--cloud-cover K]    with --clouds: EEP cloud coverage, 0 to 1
  *                   [--cloud-map FILE]   with SL's cloud texture: an .asbc from the viewer's asrtextures cache
  *                   [--anisotropy N]     anisotropic filtering, as RenderAnisotropicLevel (default 16, 1 for none)
  *                   [--audit]            count pixels occlusion culling should have kept
@@ -121,6 +122,7 @@ bool sScreenshotWanted = false; // set when that time comes, cleared once saved
 float sSunriseFrom = 0.f, sSunriseTo = 0.f, sSunriseStep = 0.f, sSunriseNow = 0.f;
 std::string sSunriseDir;
 bool sScreenshotRun = false; // --screenshot or --sunrise: one window size throughout
+float sCloudCover = -1.f;    // --cloud-cover K: EEP cloud coverage (cloud_shadow) for --clouds
 Clock::time_point sSunriseMoved; // when --sunrise last moved the sun
 
 // The test sky's sun at this elevation in degrees, same azimuth.
@@ -3214,6 +3216,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         if (sClouds)
         {
             addTestClouds(device->textures(), sSky, sCloudMap);
+            if (sCloudCover >= 0.f)
+            {
+                sSky.cloudShadow = sCloudCover;
+            }
         }
         if (sOverlays)
         {
@@ -3572,6 +3578,10 @@ int main(int argc, char** argv)
         else if (arg == "--sun-elevation" && i + 1 < argc)
         {
             setSunElevation(std::stof(argv[++i])); // after --sky
+        }
+        else if (arg == "--cloud-cover" && i + 1 < argc)
+        {
+            sCloudCover = std::stof(argv[++i]);
         }
         else if (arg == "--sunrise" && i + 4 < argc)
         {
