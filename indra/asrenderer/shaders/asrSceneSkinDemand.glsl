@@ -8,12 +8,17 @@
 const uint SKIN_DEMAND_NONE = 0u;
 const uint SKIN_DEMAND_EARLY = 1u;
 const uint SKIN_DEMAND_LATE = 2u;
+const uint SKIN_DEMAND_SHADOW = 3u; // only a shadow asked, after the final depth: SKIN_VERTICES_SHADOW
 
 layout(buffer_reference, std430) buffer SkinDemandRef { Binding items[]; };
 
-void requestSkin(ViewRef view, Instance instance, bool late)
+void requestSkinAs(ViewRef view, Instance instance, uint demand)
 {
     if ((instance.flags & INSTANCE_SKINNED) == 0u) return;
-    atomicCompSwap(SkinDemandRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding].skinDemand,
-                   SKIN_DEMAND_NONE, late ? SKIN_DEMAND_LATE : SKIN_DEMAND_EARLY);
+    atomicCompSwap(SkinDemandRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding].skinDemand, SKIN_DEMAND_NONE, demand);
+}
+
+void requestSkin(ViewRef view, Instance instance, bool late)
+{
+    requestSkinAs(view, instance, late ? SKIN_DEMAND_LATE : SKIN_DEMAND_EARLY);
 }

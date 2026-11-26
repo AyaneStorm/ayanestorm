@@ -390,6 +390,45 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     const bool animated = (command.desc.anim.mode & TEXTURE_ANIM_ON) != 0 && command.desc.terrain == 0;
     setAnimated(command.id, animated ? &material : nullptr, command.desc.anim);
     writeEntry(SceneTable::Materials, command.id, &material, sizeof(material));
+
+    // The static shadow cache: a changed material redraws its casters, and its colour
+    // texture is listed so the texture's own changes do too.
+    if (mMaterialAlpha.size() <= command.id)
+    {
+        mMaterialAlpha.resize(size_t(command.id) + 1);
+    }
+    MaterialAlpha& alpha = mMaterialAlpha[command.id];
+    const uint64_t hash = hashBytes(&material, sizeof(material));
+    if (hash == alpha.hash)
+    {
+        return;
+    }
+    alpha.hash = hash;
+    staleMaterial(command.id);
+    const uint32_t slot = command.desc.terrain != 0 ? 0 : material.texture & 0xFFFFFu; // the slot, without the sampler bits
+    if (slot == alpha.slot)
+    {
+        return;
+    }
+    if (alpha.slot != 0)
+    {
+        std::vector<uint32_t>& materials = mSlotMaterials[alpha.slot];
+        const uint32_t last = materials.back();
+        materials[alpha.at] = last;
+        mMaterialAlpha[last].at = alpha.at;
+        materials.pop_back();
+        if (materials.empty())
+        {
+            mSlotMaterials.erase(alpha.slot);
+        }
+    }
+    alpha.slot = slot;
+    if (slot != 0)
+    {
+        std::vector<uint32_t>& materials = mSlotMaterials[slot];
+        alpha.at = uint32_t(materials.size());
+        materials.push_back(command.id);
+    }
 }
 
 void SceneStore::setAnimated(uint32_t id, const GpuMaterial* material, const TextureAnimDesc& anim)
@@ -509,6 +548,7 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
     }
     InstanceUse& current = mInstanceUses[command.id];
     const InstanceDesc& desc = command.desc;
+    listMaterialUser(command.id, command.type == InstanceCommand::Type::Remove ? 0 : desc.material);
 
     // A skinned instance set again on the same skeleton, skin and geometry keeps its own
     // geometry and ranges: a new material, say, costs one binding write.
@@ -704,16 +744,96 @@ void SceneStore::staleShadow(const float sphere[4])
     mShadowDirty.insert(mShadowDirty.end(), sphere, sphere + 4);
 }
 
-uint32_t SceneStore::copyShadowDirty(float* out) const
+void SceneStore::staleMaterial(uint32_t material)
 {
-    if (mShadowRebake)
+    if (material >= mMaterialUsers.size())
+    {
+        return;
+    }
+    for (uint32_t id : mMaterialUsers[material])
+    {
+        const InstanceUse& use = mInstanceUses[id];
+        const bool solid = use.kind < SCENE_OPAQUE_KINDS && (use.kind & 2) == 0; // cast without their texture
+        if (!solid && use.cachedSphere[3] > 0.f)
+        {
+            staleShadow(use.cachedSphere);
+        }
+    }
+}
+
+// Moves an instance from its material's user list to another's (0: none), swapping the last
+// user into its place.
+void SceneStore::listMaterialUser(uint32_t id, uint32_t material)
+{
+    InstanceUse& use = mInstanceUses[id];
+    if (use.material == material)
+    {
+        return;
+    }
+    if (use.material != 0)
+    {
+        std::vector<uint32_t>& users = mMaterialUsers[use.material];
+        const uint32_t last = users.back();
+        users[use.materialAt] = last;
+        mInstanceUses[last].materialAt = use.materialAt;
+        users.pop_back();
+    }
+    use.material = material;
+    if (material != 0)
+    {
+        if (mMaterialUsers.size() <= material)
+        {
+            mMaterialUsers.resize(size_t(material) + 1);
+        }
+        use.materialAt = uint32_t(mMaterialUsers[material].size());
+        mMaterialUsers[material].push_back(id);
+    }
+}
+
+// Last frame's changed slots show their new content from this frame: the casters cutting
+// their shadow with them are redrawn.
+void SceneStore::staleChangedTextures()
+{
+    std::sort(mTexturesShown.begin(), mTexturesShown.end());
+    mTexturesShown.erase(std::unique(mTexturesShown.begin(), mTexturesShown.end()), mTexturesShown.end());
+    for (uint32_t slot : mTexturesShown)
+    {
+        const auto found = mSlotMaterials.find(slot);
+        if (found != mSlotMaterials.end())
+        {
+            for (uint32_t material : found->second)
+            {
+                staleMaterial(material);
+            }
+        }
+    }
+    mTexturesShown.swap(mTexturesChanged);
+    mTexturesChanged.clear();
+}
+
+void SceneStore::gatherShadowDirty(std::vector<float>& out, bool& rebake) const
+{
+    rebake = rebake || mShadowRebake;
+    out.insert(out.end(), mShadowDirty.begin(), mShadowDirty.end());
+}
+
+uint32_t fillShadowDirty(std::vector<float>& gathered, bool& rebake, float* out)
+{
+    uint32_t count = 0;
+    if (rebake || gathered.size() / 4 > SHADOW_MAX_DIRTY)
     {
         out[0] = out[1] = out[2] = 0.f;
-        out[3] = -1.f;
-        return 1;
+        out[3] = -1.f; // everything
+        count = 1;
     }
-    memcpy(out, mShadowDirty.data(), mShadowDirty.size() * sizeof(float));
-    return uint32_t(mShadowDirty.size() / 4);
+    else
+    {
+        memcpy(out, gathered.data(), gathered.size() * sizeof(float));
+        count = uint32_t(gathered.size() / 4);
+    }
+    gathered.clear();
+    rebake = false;
+    return count;
 }
 
 void SceneStore::settleMoving(uint64_t frame)
@@ -1630,6 +1750,7 @@ uint32_t SceneStore::skinThreads(uint32_t phase) const
             return mMorphWorkCount * SKIN_BLOCK;
         case SKIN_VERTICES:
         case SKIN_VERTICES_LATE:
+        case SKIN_VERTICES_SHADOW:
             return mSkinnedBindings == 0 ? 0 : uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used()) * SKIN_BLOCK;
         case SKIN_CLUSTERS:
         case SKIN_AUDIT:
@@ -1914,6 +2035,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     mQueue = &queue;
     mShadowDirty.clear();
     mShadowRebake = false;
+    staleChangedTextures();
 
     if (!mStarted)
     {

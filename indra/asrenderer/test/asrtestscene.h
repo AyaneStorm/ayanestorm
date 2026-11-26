@@ -566,8 +566,32 @@ public:
         std::memcpy(matrix, m, sizeof(m));
     }
 
+    // --calm: only the camera and the walking creatures move, so any flicker in the window is
+    // the renderer's, not the stress the scene puts on it.
+    bool calm = false;
+
     void update(float seconds)
     {
+        if (calm)
+        {
+            if (seconds - mLastMove >= 1.f / 45.f)
+            {
+                mLastMove = seconds;
+                for (const Creature& creature : mCreatures)
+                {
+                    pose(creature, seconds); // the GPU carries each pose on to the frame's time
+                }
+            }
+            if (mCreatures.size() < CREATURES && seconds - mLastArrival >= 0.1f)
+            {
+                mLastArrival = seconds;
+                for (uint32_t i = 0; i < 4 && mCreatures.size() < CREATURES; ++i)
+                {
+                    arriveCreature(seconds);
+                }
+            }
+            return;
+        }
         if (seconds - mLastMove >= 1.f / 45.f)
         {
             mLastMove = seconds;

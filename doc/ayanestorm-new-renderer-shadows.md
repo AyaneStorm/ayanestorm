@@ -78,10 +78,7 @@ Reviewed against Nanite (SIGGRAPH 2021), where virtual shadow maps were born: th
 
 ### Sun or moon
 
-1. **4 cascades** (fewer on small budgets), placed by **quantized SDSM**:
-   - the depth range on screen, read from the depth pyramid, fits the splits;
-   - the splits are rounded to steps and kept until the fit moves by more than one step, so the cache survives and edges do not shimmer;
-   - each cascade is snapped to whole texels.
+1. **4 cascades** (fewer on small budgets), centred on the camera, each snapped to whole texels. **Fixed reach** (user, 26 November 2026): the draw distance up to 512 m, split between logarithmic and even. Quantized SDSM (fitting the splits to the depth range on screen) was built and dropped: the reach changed as the camera turned or a head moved, cascades jumped size, and self-shadowing flickered (glossy earrings flashed; they stopped with shadows off). The cost is some sharpness in near cascades indoors.
 2. **Static cache per cascade**, scrolled when the camera moves, copied into the working map each frame, with moving content drawn on top. How (26 November 2026):
    - **Each frame:** a shift pass copies the cache into the working map, moved by the whole texels the cascade scrolled, writing empty depth in dirty tiles; static casters are drawn into the dirty tiles; the working map is copied back as the new cache; moving casters are drawn on top. Two map copies a frame (about 0.1 ms at 2048), no extra memory, and the lists and readers stay as they are. A wrap-around map was weighed: it saves the copies but puts clusters across its seam in the lists more than once, which cannot be sized exactly.
    - **Window in whole texels** of a world-anchored grid across the light, and **depth from a world origin** along the light, stepped by a quarter of the cascade: a depth step redraws that cascade.
@@ -114,8 +111,10 @@ Reviewed against Nanite (SIGGRAPH 2021), where virtual shadow maps were born: th
 
 ### Soft edges
 
-- **PCSS:** a blocker search on the min mips gives the blocker distance, then a PCF filter that widens with it. The sample pattern rotates per pixel but is the same in every frame, so nothing needs temporal smoothing.
-- **Light size:** the sun's or moon's angular size, a projector's focus and ambiance settings, a point light's radius.
+- **PCSS (built 26 November 2026, `asr_shadow_sun()`):** the blocker search reads the map itself, 8 gathers: the 4 by 4 texels around the point and 4 on a circle as wide as the widest edge (20 m of blocker height). No blocker: lit, no filter; all blocked: shadow, no filter (interiors). Otherwise the blockers' mean height sets the radius: the 4 by 4 box up to 2 texels, then 16 gathers on a Vogel disc, blended between the two. The disc turns by a hash of the world texel, the same in every frame. **No min mips:** rebuilding them for four 2048² maps every frame (moving casters change them) reads 64 MB a frame, over 1 ms on a GT 1030, and costs VRAM; the early-outs make the direct search cheaper than the old 4 by 4 box on most pixels. Cascade edges blend into the next cascade over 8% of the width.
+- **Contact shadows (built 26 November 2026, `contactShadow()` in the resolve):** a 12-step trace of 6 cm towards the light through the final depth, inside the resolve rather than Bend's separate pass and mask: only pixels the light still reaches after the maps, within 12 m, pay for it, and nothing is stored. Avatars' alpha casters (hair, lace) are drawn into the maps 6 cm further from the light: strands are thinner than a cascade-0 texel and pulsed through the map as blotches on faces; the trace shadows them at screen resolution. (Ignoring blockers under 6 cm on avatar skin instead cut the body's own shadows along a 6 cm line: blocky shapes.) Faded out where the light grazes the side seen, where the trace finds its own surface. Blended surfaces are not in the depth and cast no contact shadow.
+- **Light size:** the real sun's disc (0.00465 rad) for the sun and moon, not EEP's drawn size, which can be many times larger and would blur every shadow; a projector's focus and ambiance settings, a point light's radius.
+- **Casting alpha (built 26 November 2026):** a masked texel at or above its cutoff is solid, a blended one counts by its alpha, and either casts from 0.5 up, read one mip sharper than the shadow texel. OpenGL's half-dense columns below 0.88 became grey blotches crawling over faces. What the masked draw reads is kept per texture slot and cascade (`GpuShadowViews::demand`) and added to the texture feedback every frame (`asrShadowDemandC`), so a texture only a shadow shows keeps its size. A texture or material change redraws the cached tiles of its casters.
 - **Wide edges:** screen-space blur (SSSS) measured against wider PCSS; the faster one wins at equal look.
 - **Volumetrics:** they use plain hardware PCF (one tap, filtered), since fog hides edge detail.
 

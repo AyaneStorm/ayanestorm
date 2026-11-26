@@ -24,6 +24,9 @@ layout(location = 0) flat out uint vary_visibility;
 layout(location = 1) out vec2 vary_uv;
 layout(location = 2) flat out uint vary_texture;
 layout(location = 3) flat out vec2 vary_alpha; // the material's alpha, and its cutoff
+#ifdef SHADOW
+layout(location = 4) flat out uint vary_layer; // the cascade drawn: its share of the texture demand
+#endif
 #endif
 
 void main()
@@ -50,6 +53,9 @@ void main()
     vary_uv = vec2(0.0);
     vary_texture = 0u;
     vary_alpha = vec2(0.0);
+#ifdef SHADOW
+    vary_layer = shadow.layer;
+#endif
 #endif
     if (triangle >= cluster.triangles)
     {
@@ -66,6 +72,16 @@ void main()
     const uint vertex = clusterIndex(cluster.indices, triangle * 3u + corner);
 #ifdef SHADOW
     gl_Position = shadowPosition(view, shadow.viewProjection, instance, packedPosition(cluster.positions, vertex));
+#ifdef MASKED
+    // An avatar's alpha casters (hair, lace) sit SHADOW_AVATAR_ALPHA_PUSH further from the light:
+    // strands thinner than a texel pulsed through the map as blotches on the skin under them
+    // (user's capture, 26 November 2026). Closer than that, the resolve's contact shadows
+    // draw them at screen resolution; farther (shoulders, the ground) the map still does.
+    if ((instance.flags & INSTANCE_SKINNED) != 0u)
+    {
+        gl_Position.z -= SHADOW_AVATAR_ALPHA_PUSH / shadow.depthRange * gl_Position.w;
+    }
+#endif
 #else
     gl_Position = scenePosition(view, instance, packedPosition(cluster.positions, vertex));
 #endif

@@ -20,6 +20,13 @@ void main()
     ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
     const uint v = vary_layer;
     const ivec2 texel = ivec2(gl_FragCoord.xy);
+    if (view.shadowUpdate == 0u)
+    {
+        // Between updates: the cache as it is, under this frame's moving casters. Dirty marks
+        // gathered meanwhile wait for the next update.
+        gl_FragDepth = texelFetch(shadowCache, ivec3(texel, int(v)), 0).r;
+        return;
+    }
     const uvec2 tile = uvec2(vec2(texel) * (float(SHADOW_TILES) / view.shadowResolution));
     if ((shadows.dirty[v * SHADOW_TILES + tile.y] & (1u << tile.x)) != 0u)
     {

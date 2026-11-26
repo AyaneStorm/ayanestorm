@@ -111,6 +111,7 @@ struct ShadowInput
     uint32_t detail = 1;          // RenderShadowDetail: 0 none, 1 sun and moon, 2 also projectors (step 3)
     float resolutionScale = 1.f;  // RenderShadowResolutionScale: see shadowMapSize() in asrscene.h
     float sunStep = 0.25f;        // ASRendererShadowSunStep, degrees: SHADOW_LIGHT_STEP; 0 follows the light every frame
+    float interval = 30.f;        // ASRendererShadowInterval, milliseconds between shadow updates; 0 every frame
 };
 
 // The presented frame, read back for tests (asrenderer_test --screenshot): 8-bit RGBA, top row
@@ -166,6 +167,8 @@ struct SceneStats
     uint64_t lateClusters = 0;        // found by the second
     uint64_t shadowClusters = 0;      // static shadow list entries, redrawn into dirty tiles, every shadow view
     uint64_t shadowMovingClusters = 0; // moving ones, drawn every frame
+    uint32_t movingInstances = 0;     // INSTANCE_MOVING: moved within SHADOW_SETTLE_FRAMES
+    uint32_t skinnedBindings = 0;     // rigged faces on skeletons (attached ones are moving content too)
     uint64_t retestEntries = 0;       // what the first phase left for the second
     uint64_t groupEntries = 0;        // cluster groups tested a thread per cluster, both phases
     uint32_t guardBits = 0;           // temporary: the resolve's failed checks since the start, GUARD_*

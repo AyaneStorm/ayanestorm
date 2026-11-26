@@ -293,7 +293,7 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint shadowDirtyCount;
     uint64_t shadowDirty;    // vec4 spheres: GpuSceneView::shadowDirty
     float shadowLightStep;
-    uint shadowPad;
+    uint shadowUpdate;       // GpuSceneView::shadowUpdate
     uint64_t instanceLods;   // see selectLod() in asrSceneCullC.glsl
 };
 
@@ -321,6 +321,10 @@ struct ShadowView
 };
 const uint MAX_SHADOW_VIEWS = 32u;
 const uint SHADOW_TILES = 32u;
+const uint SHADOW_DEMAND_SLOTS = 65536u; // GpuShadowViews::demand
+const float SHADOW_FILTER_TEXELS = 24.0;  // asr_shadow_sun()'s widest search and filter radius, texels
+const float SHADOW_FILTER_MARGIN = SHADOW_FILTER_TEXELS + 3.0; // what a point's filter reads around it, texels
+const float SHADOW_AVATAR_ALPHA_PUSH = 0.06; // metres an avatar's alpha casters are drawn away from the light; contact shadows' reach
 const uint SHADOW_DRAW_STATIC = 0u;
 const uint SHADOW_DRAW_MOVING = 1u;
 layout(buffer_reference, std430) buffer ShadowViewsRef
@@ -328,10 +332,13 @@ layout(buffer_reference, std430) buffer ShadowViewsRef
     vec4 splits;
     uint count;
     uint light;
-    float pad[2];
+    uint keep;            // GpuShadowViews::keep: a bit per cascade whose demand bits stay
+    float pad;
     vec4 cachedLight;
     ShadowView views[MAX_SHADOW_VIEWS];
-    uint dirty[];         // [view * SHADOW_TILES + tile row], a bit per tile
+    uint dirty[MAX_SHADOW_VIEWS * SHADOW_TILES]; // [view * SHADOW_TILES + tile row], a bit per tile
+    uint receivers[MAX_SHADOW_VIEWS * SHADOW_TILES]; // the same layout: tiles a visible pixel reads this frame
+    uint demand[];        // GpuShadowViews::demand, [slot * 2 + word]: words, as Metal has no atomics on a vector's element
 };
 layout(buffer_reference, std430) readonly buffer SpheresRef { vec4 items[]; };
 
@@ -408,6 +415,9 @@ const uint DEBUG_VIEW_NO_OCCLUSION = 5u;
 const uint DEBUG_VIEW_NO_ENVIRONMENT = 6u; // legacy shading without its environment terms
 const uint DEBUG_VIEW_NO_HIGHLIGHT = 7u;   // legacy shading without sun and moon highlights
 const uint DEBUG_VIEW_SHADOW_CASCADES = 8u;
+const uint DEBUG_VIEW_NO_CONTACT = 9u;
+const uint DEBUG_VIEW_SHADOW_CAUSE = 10u;
+const uint DEBUG_VIEW_SHADOW_PATH = 11u;
 
 // The sphere touches the view frustum and is nearer than the far clip.
 bool insideView(ViewRef view, vec3 center, float radius)

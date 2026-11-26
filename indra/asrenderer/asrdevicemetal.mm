@@ -318,6 +318,7 @@ public:
             // RenderShadowDetail 0 keeps a 1 texel map: the shaders always name one.
             mShadowCascades = input.shadow.detail > 0 ? SHADOW_CASCADES : 0;
             mShadowLightStep = std::cos(std::max(input.shadow.sunStep, 0.f) * 0.0174532925f);
+            mShadowInterval = input.shadow.interval;
             mWantedShadowSize = mShadowCascades != 0 ? shadowMapSize(mMemoryBudget.budget(), input.shadow.resolutionScale) : 1;
             useAnisotropy(slot, input.anisotropy);
             if (input.camera && !recordScene(commands, slot, *input.camera, worldWidth, worldHeight, input.audit, input.overlay))
@@ -686,6 +687,12 @@ private:
     bool createShadows(const std::string& shaderDir, std::string& error)
     {
         mShadowFitPipeline = createComputePipeline(shaderDir, "asrShadowFitC", error);
+        mShadowReceiversPipeline = createComputePipeline(shaderDir, "asrShadowReceiversC", error);
+        mShadowDemandPipeline = mShadowReceiversPipeline ? createComputePipeline(shaderDir, "asrShadowDemandC", error) : nil;
+        if (!mShadowDemandPipeline)
+        {
+            return false;
+        }
         id<MTLFunction> vertex = loadFunction(shaderDir, "asrShadowV", error);
         id<MTLFunction> maskedVertex = loadFunction(shaderDir, "asrShadowMaskedV", error);
         id<MTLFunction> maskedFragment = loadFunction(shaderDir, "asrShadowMaskedF", error);
@@ -1894,7 +1901,18 @@ private:
         view.instanceLods = addressOf(mInstanceLods);
         fillShadowView(view, mShadowCascades, mShadowSize, addressOf(mShadowViews), addressOf(mShadowLists));
         view.shadowLightStep = mShadowLightStep;
-        view.shadowDirtyCount = mSceneStore.copyShadowDirty(static_cast<float*>(mShadowDirty[slot].contents));
+        // The maps are redrawn every ASRendererShadowInterval (the user's exception to the
+        // every-frame rule); between updates every reader uses the last ones, and what went
+        // stale meanwhile is gathered for the next update.
+        mSceneStore.gatherShadowDirty(mShadowGathered, mShadowGatheredRebake);
+        mShadowUpdate = mShadowReset || mShadowInterval <= 0.f ||
+                        std::chrono::duration<float, std::milli>(mRecordTime - mLastShadowUpdate).count() >= mShadowInterval;
+        if (mShadowUpdate)
+        {
+            mLastShadowUpdate = mRecordTime;
+        }
+        view.shadowUpdate = mShadowUpdate ? 1 : 0;
+        view.shadowDirtyCount = mShadowUpdate ? fillShadowDirty(mShadowGathered, mShadowGatheredRebake, static_cast<float*>(mShadowDirty[slot].contents)) : 0;
         view.shadowDirty = addressOf(mShadowDirty[slot]);
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
@@ -1948,7 +1966,12 @@ private:
             [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, shadowGroups)
                                    threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
         }
-        else if (phase == CULL_LOD)
+        else if (phase == CULL_GROUPS_MOVING)
+        {
+            [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, shadowMovingGroups)
+                                   threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        }
+        else if (phase == CULL_LOD || phase == CULL_MOVING)
         {
             if (mSceneInstanceEnd != 0)
             {
@@ -2084,6 +2107,10 @@ private:
     // Static casters into dirty tiles, or moving ones on top (SHADOW_DRAW_*).
     bool passShadowDraw(uint32_t phase)
     {
+        if (!mShadowUpdate && phase == SHADOW_DRAW_STATIC)
+        {
+            return true; // moving casters are drawn every frame
+        }
         id<MTLRenderCommandEncoder> draw = beginShadowPass(true);
         [draw setDepthStencilState:mShadowDepthState];
         mScenePush.phase = phase;
@@ -2108,8 +2135,14 @@ private:
     // The working map, static casters drawn, becomes next frame's cache.
     bool passShadowStore()
     {
+        if (!mShadowUpdate)
+        {
+            return true;
+        }
         id<MTLBlitCommandEncoder> copy = [mRecordCommands blitCommandEncoder];
         [copy waitForFence:mSceneFence];
+        // The dirty tiles are drawn: marks gathered until the next update start from none.
+        [copy fillBuffer:mShadowViews range:NSMakeRange(offsetof(GpuShadowViews, dirty), sizeof(GpuShadowViews::dirty)) value:0];
         [copy copyFromTexture:mSunShadow sourceSlice:0 sourceLevel:0 toTexture:mShadowCache destinationSlice:0 destinationLevel:0
                    sliceCount:SHADOW_CASCADES levelCount:1];
         [copy updateFence:mSceneFence];
@@ -2156,6 +2189,7 @@ private:
         [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [resolve setTexture:mVisibilityTarget atIndex:0];
         [resolve setTexture:mNormalTarget atIndex:2];
+        [resolve setTexture:mDepthTarget atIndex:3]; // contact shadows
         [resolve setTexture:mLitTarget atIndex:8];
         [resolve setTexture:mSunShadow atIndex:20]; // asrShadow.glsl
         bindSkyTables(resolve); // the background
@@ -2235,7 +2269,8 @@ private:
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
         setMacOITBodies();
         const PassId skinPasses[SKIN_PHASES] = { PassSkinPose, PassSkinPalette, PassSkinBind, PassSkinMorph,
-                                               PassSkinVertices, PassSkinClusters, PassSkinGroups, PassSkinVerticesLate, PassSkinAudit };
+                                               PassSkinVertices, PassSkinClusters, PassSkinGroups, PassSkinVerticesLate, PassSkinAudit,
+                                               PassSkinVerticesShadow };
         for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
         {
             mGraph.setBody(skinPasses[phase], [this, phase]()
@@ -2244,6 +2279,16 @@ private:
             });
         }
         mGraph.setBody(PassShadowFit, [this]() { return passShadowFit(); });
+        mGraph.setBody(PassShadowDemand, [this]()
+        {
+            id<MTLComputeCommandEncoder> encoder = beginCompute();
+            [encoder setComputePipelineState:mShadowDemandPipeline];
+            [encoder setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+            [encoder dispatchThreadgroups:MTLSizeMake(SHADOW_DEMAND_SLOTS / 256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+            [encoder updateFence:mSceneFence];
+            [encoder endEncoding];
+            return true;
+        });
         mGraph.setBody(PassLodSelect, [this]()
         {
             if (mLodReset)
@@ -2259,6 +2304,19 @@ private:
             return passCull(CULL_LOD);
         });
         mGraph.setBody(PassShadowGroups, [this]() { return passCull(CULL_GROUPS_SHADOW); });
+        mGraph.setBody(PassShadowReceivers, [this]()
+        {
+            id<MTLComputeCommandEncoder> encoder = beginCompute();
+            [encoder setComputePipelineState:mShadowReceiversPipeline];
+            [encoder setTexture:mDepthTarget atIndex:3];
+            [encoder setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+            [encoder dispatchThreadgroups:MTLSizeMake((mSceneWidth + 15) / 16, (mSceneHeight + 15) / 16, 1) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+            [encoder updateFence:mSceneFence];
+            [encoder endEncoding];
+            return true;
+        });
+        mGraph.setBody(PassShadowMovingCull, [this]() { return passCull(CULL_MOVING); });
+        mGraph.setBody(PassShadowMovingGroups, [this]() { return passCull(CULL_GROUPS_MOVING); });
         mGraph.setBody(PassShadowShift, [this]() { return passShadowShift(); });
         mGraph.setBody(PassShadowDraw, [this]() { return passShadowDraw(SHADOW_DRAW_STATIC); });
         mGraph.setBody(PassShadowStore, [this]() { return passShadowStore(); });
@@ -2419,6 +2477,8 @@ private:
 
         mSceneFrameStats.instances = mSceneInstanceEnd;
         mSceneFrameStats.triangles = mSceneStore.triangles();
+        mSceneFrameStats.movingInstances = mSceneStore.movingInstances();
+        mSceneFrameStats.skinnedBindings = mSceneStore.skinnedBindings();
         mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
         mSceneFrameStats.chunks = mSceneStore.chunkCount();
         mSceneFrameStats.paletteEnd = mSceneStore.rangeEnd(SceneTable::Palette);
@@ -3235,6 +3295,11 @@ private:
                     mRetiredTextures.add(command.slot, command.lastList);
                     break;
             }
+            if (command.type == TextureCommand::Type::Upload || command.type == TextureCommand::Type::GenerateMips ||
+                command.type == TextureCommand::Type::Publish)
+            {
+                mSceneStore.textureChanged(command.slot); // cached shadows cut with it are redrawn
+            }
         }
         [blit endEncoding];
 
@@ -3415,6 +3480,8 @@ private:
     id<MTLTexture> mSunShadow = nil;   // the working map, a layer per cascade
     id<MTLTexture> mShadowCache = nil; // static casters alone, kept between frames
     id<MTLComputePipelineState> mShadowFitPipeline = nil;
+    id<MTLComputePipelineState> mShadowReceiversPipeline = nil;
+    id<MTLComputePipelineState> mShadowDemandPipeline = nil;
     id<MTLRenderPipelineState> mShadowPipeline = nil;
     id<MTLRenderPipelineState> mShadowMaskedPipeline = nil;
     id<MTLRenderPipelineState> mShadowShiftPipeline = nil;
@@ -3425,6 +3492,11 @@ private:
     uint32_t mShadowCascades = 0;
     float mShadowLightStep = 1.f;
     bool mShadowReset = true;
+    float mShadowInterval = 30.f;   // ASRendererShadowInterval, milliseconds
+    bool mShadowUpdate = true;      // GpuSceneView::shadowUpdate, this frame
+    std::chrono::steady_clock::time_point mLastShadowUpdate{};
+    std::vector<float> mShadowGathered; // stale spheres since the last update
+    bool mShadowGatheredRebake = false;
     id<MTLBuffer> mSceneCountsTemplate = nil;
     id<MTLBuffer> mSceneViews[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneReadback[FRAMES_IN_FLIGHT];

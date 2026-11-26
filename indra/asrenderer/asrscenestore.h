@@ -172,9 +172,15 @@ public:
     uint64_t shadowListBytes() const; // the shadow lists, then the shadow group entries: see fillView()
     // World spheres (x, y, z, radius) whose cached static shadow went stale in this update,
     // and whether everything did (GpuSceneView::shadowDirty).
-    // Copies them to `out` (room for SHADOW_MAX_DIRTY), a single negative radius when
-    // everything is stale, and returns how many.
-    uint32_t copyShadowDirty(float* out) const;
+    // Adds them to `out`, which gathers them until the next shadow update, and sets
+    // `rebake` when everything went stale.
+    void gatherShadowDirty(std::vector<float>& out, bool& rebake) const;
+    // Render thread: a texture slot's content changed (an upload, its mips, a published
+    // replacement). The casters cutting their shadow with it are redrawn a frame later,
+    // once every frame's copy of the texture array shows the new content.
+    void textureChanged(uint32_t slot) { mTexturesChanged.push_back(slot); }
+    // The store's own per-update list is cleared each update, so devices gather between
+    // shadow updates; see fillShadowDirty().
 
     // The room the group list needs if every group of every instance passes.
     uint64_t groupCapacity() const;
@@ -195,6 +201,8 @@ public:
     size_t pendingGeometries() const { return mQueuedGeometries; }
 
     uint64_t triangles() const { return mTriangles; }   // in all instances
+    uint32_t movingInstances() const { return uint32_t(mMovingInstances.size()); } // INSTANCE_MOVING set
+    uint32_t skinnedBindings() const { return mSkinnedBindings; }
     uint32_t chunkCount() const;
     // Temporary, for the log: skin jobs run over a table up to its end; live is what is in use.
     uint64_t rangeEnd(SceneTable table) const { return mRanges[uint32_t(table)].used(); }
@@ -246,6 +254,8 @@ private:
     {
         uint32_t geometry = 0; // 0 means free
         uint32_t kind = 0;
+        uint32_t material = 0;   // listed in mMaterialUsers: its alpha casts through that material
+        uint32_t materialAt = 0; // its place in that list
         uint32_t binding = 0;
         uint32_t selectedClusters = 0; // selected: what it may add to the selection list
         float hudDepth = 0.f;          // a HUD instance: its centre along the HUD camera's axis
@@ -396,6 +406,11 @@ private:
     // that have stood still for SHADOW_SETTLE_FRAMES become static again.
     void staleShadow(const float sphere[4]);
     void settleMoving(uint64_t frame);
+    // A material's alpha changed (its colour texture's content, or the material itself): the
+    // cached shadows of the instances casting through it are redrawn.
+    void staleMaterial(uint32_t material);
+    void listMaterialUser(uint32_t id, uint32_t material);
+    void staleChangedTextures();
     void instanceSphere(const GpuInstance& instance, float sphere[4]) const;
     void removeGeometry(uint32_t id, uint64_t frame);
     void removeIfUnused(uint32_t id, uint64_t frame);
@@ -490,6 +505,20 @@ private:
     std::set<uint32_t> mHudInstances; // ids drawn by the HUD pass
     std::vector<float> mShadowDirty;  // this update's stale world spheres, 4 floats each
     bool mShadowRebake = false;       // every cached shadow is stale
+    // What a texture or material change redraws in the static shadow cache. A leaf texture
+    // streamed to another size cut the cached leaves differently only in tiles redrawn for
+    // other reasons: shadows changed in square blocks (user's capture, 26 November 2026).
+    struct MaterialAlpha
+    {
+        uint32_t slot = 0; // its colour texture, whose alpha it casts through
+        uint32_t at = 0;   // its place in mSlotMaterials[slot]
+        uint64_t hash = 0; // the material as last written, to skip writes that change nothing
+    };
+    std::vector<std::vector<uint32_t>> mMaterialUsers; // by material: the instances using it
+    std::vector<MaterialAlpha> mMaterialAlpha;         // by material
+    std::unordered_map<uint32_t, std::vector<uint32_t>> mSlotMaterials; // by texture slot
+    std::vector<uint32_t> mTexturesChanged; // slots whose content changed, this frame
+    std::vector<uint32_t> mTexturesShown;   // last frame's: their content shows from this one
     std::unordered_map<uint32_t, GpuInstance> mMovingInstances; // INSTANCE_MOVING set, as last written
     bool mStarted = false;
     bool mPositionsCompacted = false;
@@ -508,5 +537,9 @@ private:
     RangeAllocator mRanges[SCENE_TABLES];  // for the avatar tables that hold ranges
     SceneQueue* mQueue = nullptr;          // during update(), for the store's own geometries
 };
+
+// At a shadow update: the gathered spheres into `out` (room for SHADOW_MAX_DIRTY), a single
+// negative radius for everything; empties the gathering and returns the count.
+uint32_t fillShadowDirty(std::vector<float>& gathered, bool& rebake, float* out);
 
 } // namespace asr

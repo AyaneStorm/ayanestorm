@@ -5,9 +5,8 @@
  * first a thread per cascade places it, then a thread per cascade and tile row marks its
  * dirty tiles (GpuShadowViews::dirty).
  *
- * Reach: twice the farthest depth on screen last frame, as OpenGL's, read from the depth
- * pyramid's last 1 by 1 level, at most view.shadowDistance, which it reaches when the sky
- * shows. Each cascade is a box around a sphere centred on the camera: a fixed area whichever
+ * Reach: view.shadowDistance, the draw distance up to 512 m, whatever the screen shows, so
+ * the cascades never change size as the camera turns. Each cascade is a box around a sphere centred on the camera: a fixed area whichever
  * way the camera looks. Its radius moves in quarter octave steps and keeps its step until the
  * reach leaves it. The window sits on whole texels of a grid anchored in the world across the
  * light, and depth is measured from a world origin along the light stepped by a quarter of
@@ -28,9 +27,9 @@ layout(set = 0, binding = 1) uniform sampler samplers[4];
 
 layout(local_size_x = 128) in;
 
-layout(buffer_reference, std430) readonly buffer PyramidRef { float values[]; };
 
-const float SPLIT_LOG_SHARE = 0.8;
+const float SPLIT_LOG_SHARE = 1.0;
+const float SHADOW_NEAREST = 1.0; // metres where the logarithmic splits start
 const float QUARTER_OCTAVE = 1.18920712; // 2^(1/4)
 
 shared vec3 sLight;
@@ -49,26 +48,79 @@ float splitAt(uint k, uint cascades, float near, float far)
     return mix(near + (far - near) * t, near * pow(far / near, t), SPLIT_LOG_SHARE);
 }
 
+vec3 uAcross(vec3 toLight)
+{
+    const vec3 helper = abs(toLight.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    return normalize(cross(helper, toLight));
+}
+
+// The matrix and planes of a window at shadow.origin and shadow.depthOrigin, for readers
+// relative to this frame's camera. Returns the camera's place in the window across the light.
+vec2 placeView(inout ShadowView shadow, vec3 u, vec3 v, vec3 toLight, float radius, vec3 camera)
+{
+    const float texel = 2.0 * radius / ViewRef(push.view).shadowResolution;
+    const vec2 offset = vec2(dot(camera, u), dot(camera, v)) - vec2(shadow.origin) * texel;
+    const float offsetL = dot(camera, toLight) - shadow.depthOrigin;
+    const float depthHalf = radius * 1.5; // the sphere, wherever the camera is in its depth step
+
+    // Camera-relative: x = (dot(p, u) + offset.x) / radius, and depth 1 towards the light.
+    const float s = 1.0 / radius;
+    const float d = 0.5 / depthHalf;
+    shadow.viewProjection = mat4(vec4(u.x * s, v.x * s, toLight.x * d, 0.0),
+                                 vec4(u.y * s, v.y * s, toLight.y * d, 0.0),
+                                 vec4(u.z * s, v.z * s, toLight.z * d, 0.0),
+                                 vec4(offset.x * s, offset.y * s, 0.5 + offsetL * d, 1.0));
+    shadow.planes[0] = vec4(u, radius + offset.x);
+    shadow.planes[1] = vec4(-u, radius - offset.x);
+    shadow.planes[2] = vec4(v, radius + offset.y);
+    shadow.planes[3] = vec4(-v, radius - offset.y);
+    shadow.planes[4] = vec4(toLight, depthHalf + offsetL); // the side away from the light
+    shadow.planes[5] = vec4(0.0, 0.0, 0.0, 1.0);
+    shadow.lightDirection = vec4(toLight, texel);
+    shadow.depthRange = 2.0 * depthHalf;
+    return offset;
+}
+
 void main()
 {
     ViewRef view = ViewRef(push.view);
     ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    // Every frame: the receiver tiles start empty (asrShadowReceiversC.glsl marks them).
+    for (uint word = gl_LocalInvocationID.x; word < MAX_SHADOW_VIEWS * SHADOW_TILES; word += gl_WorkGroupSize.x)
+    {
+        shadows.receivers[word] = 0u;
+    }
+    if (view.shadowUpdate == 0u)
+    {
+        // Between updates (ASRendererShadowInterval) the windows stay where the maps were drawn,
+        // re-placed for this frame's camera: every reader is camera-relative, and views kept
+        // as they were slid the cached shadows by the camera's motion until the next update.
+        const uint k = gl_LocalInvocationID.x;
+        if (k < shadows.count && shadows.views[k].valid != 0u)
+        {
+            ShadowView shadow = shadows.views[k];
+            const vec3 toLight = shadow.lightDirection.xyz;
+            const vec3 u = uAcross(toLight);
+            placeView(shadow, u, cross(toLight, u), toLight, shadow.lightDirection.w * view.shadowResolution * 0.5, view.camera.xyz);
+            shadows.views[k] = shadow;
+        }
+        if (k == 0u)
+        {
+            shadows.keep = 0xFu; // asrShadowDemandC.glsl: nothing drawn whole
+        }
+        return;
+    }
     const uint cascades = min(view.shadowCascades, SHADOW_CASCADES);
     const uint t = gl_LocalInvocationID.x;
     const float size = view.shadowResolution;
 
-    const float near = view.projection.z;
-    float far = view.shadowDistance;
-    if (view.previousProjection.w != 0.0 && view.pyramidLevels != 0u)
-    {
-        const float farthest = PyramidRef(push.pyramid).values[view.pyramidOffset[view.pyramidLevels - 1u]];
-        if (farthest > 0.0)
-        {
-            // As OpenGL: twice the farthest depth seen, from 16 m. Reversed depth is near / distance.
-            far = min(far, max(2.0 * view.previousProjection.z / farthest, 16.0));
-        }
-    }
-    far = max(far, near * 4.0);
+    // A fixed reach: sized from what the screen shows, the cascades jumped as the camera turned
+    // or a head moved, and self-shadowing flickered with them (user's capture, 26 November 2026).
+    // Logarithmic from 1 m: 4.8, 23, 108 and 512 m at the full reach, so the nearest cascade
+    // has texels of a few millimetres (an even share left it 26 m wide, and small moving
+    // things such as earrings shadowed themselves in a pattern that flickered).
+    const float near = SHADOW_NEAREST;
+    const float far = max(view.shadowDistance, near * 4.0);
 
     if (t == 0u)
     {
@@ -101,41 +153,23 @@ void main()
         const float texel = 2.0 * radius / size;
 
         const vec3 toLight = sLight;
-        const vec3 helper = abs(toLight.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-        const vec3 u = normalize(cross(helper, toLight));
+        const vec3 u = uAcross(toLight);
         const vec3 v = cross(toLight, u);
         const vec3 camera = view.camera.xyz;
         const ivec2 origin = ivec2(floor(vec2(dot(camera, u), dot(camera, v)) / texel + 0.5));
-        const vec2 offset = vec2(dot(camera, u), dot(camera, v)) - vec2(origin) * texel; // under half a texel
         const float depthStep = radius * 0.25;
         const float depthOrigin = floor(dot(camera, toLight) / depthStep + 0.5) * depthStep;
-        const float offsetL = dot(camera, toLight) - depthOrigin;
-        const float depthHalf = radius * 1.5; // the sphere, wherever the camera is in its depth step
 
         const ivec2 shift = origin - old.origin;
         const bool full = !keep || old.valid == 0u || depthOrigin != old.depthOrigin || old.lodScale != view.projection.w ||
                           abs(shift.x) >= int(size) || abs(shift.y) >= int(size);
 
-        // Camera-relative: x = (dot(p, u) + offset.x) / radius, and depth 1 towards the light.
-        const float s = 1.0 / radius;
-        const float d = 0.5 / depthHalf;
         ShadowView shadow;
-        shadow.viewProjection = mat4(vec4(u.x * s, v.x * s, toLight.x * d, 0.0),
-                                     vec4(u.y * s, v.y * s, toLight.y * d, 0.0),
-                                     vec4(u.z * s, v.z * s, toLight.z * d, 0.0),
-                                     vec4(offset.x * s, offset.y * s, 0.5 + offsetL * d, 1.0));
-        shadow.planes[0] = vec4(u, radius + offset.x);
-        shadow.planes[1] = vec4(-u, radius - offset.x);
-        shadow.planes[2] = vec4(v, radius + offset.y);
-        shadow.planes[3] = vec4(-v, radius - offset.y);
-        shadow.planes[4] = vec4(toLight, depthHalf + offsetL); // the side away from the light
-        shadow.planes[5] = vec4(0.0, 0.0, 0.0, 1.0);
-        shadow.lightDirection = vec4(toLight, texel);
-        shadow.depthRange = 2.0 * depthHalf;
-        shadow.layer = t;
         shadow.origin = origin;
-        shadow.previousOrigin = full ? origin : old.origin;
         shadow.depthOrigin = depthOrigin;
+        const vec2 offset = placeView(shadow, u, v, toLight, radius, camera); // under half a texel
+        shadow.layer = t;
+        shadow.previousOrigin = full ? origin : old.origin;
         shadow.lodScale = view.projection.w;
         shadow.valid = 1u;
         shadow.pad[0] = 0.0;
@@ -155,6 +189,18 @@ void main()
         sFull[t] = full;
     }
     barrier();
+
+    // A cascade drawn whole, or gone, holds none of what it held: its demand starts again
+    // (asrShadowDemandC.glsl).
+    if (t == 0u)
+    {
+        uint keep = 0u;
+        for (uint k = 0u; k < 4u; ++k)
+        {
+            keep |= lit && k < cascades && !sFull[k] ? 1u << k : 0u;
+        }
+        shadows.keep = keep;
+    }
 
     if (!lit || t >= cascades * SHADOW_TILES)
     {
@@ -202,5 +248,6 @@ void main()
             }
         }
     }
-    shadows.dirty[c * SHADOW_TILES + row] = mask;
+    // Added to the LOD marks gathered since the last update; the store pass clears them.
+    shadows.dirty[c * SHADOW_TILES + row] |= mask;
 }

@@ -33,6 +33,8 @@ const uint CULL_GROUPS_LATE = 4u;
 const uint CULL_GROUPS_AUDIT = 5u;
 const uint CULL_GROUPS_SHADOW = 7u;
 const uint CULL_LOD = 8u;
+const uint CULL_MOVING = 9u;
+const uint CULL_GROUPS_MOVING = 10u;
 const uint LOD_UNKNOWN = 0xFFFFFFFFu; // a new instance index, or a new LOD table
 layout(buffer_reference, std430) buffer LodsRef { uint items[]; };
 
@@ -72,6 +74,7 @@ layout(buffer_reference, std430) buffer CountsRef
     WorkCount shadowGroups;
     DrawArguments shadowMoving[LISTS];
     uint shadowUsed[LISTS];
+    WorkCount shadowMovingGroups;
 };
 
 const uint MACOIT_GATE = 6u;
@@ -493,31 +496,85 @@ void drawShadow(ViewRef view, Instance instance, uint instanceIndex, uint cluste
         lists.items[at] = ListEntry(instanceIndex | (uint(findLSB(bits)) << SHADOW_VIEW_SHIFT), clusterId);
         ++slot;
     }
-    requestSkin(view, instance, false);
+    // Moving casters are culled after the final depth: skinned by SKIN_VERTICES_SHADOW
+    // unless the main view already asked.
+    requestSkinAs(view, instance, moving ? SKIN_DEMAND_SHADOW : SKIN_DEMAND_EARLY);
 }
 
-void addShadowGroup(ViewRef view, uint instanceIndex, uint groupId, uint views)
+// Static casters' group entries from the start, moving ones' from the end backwards: an
+// instance is one or the other, so the room for every group holds both.
+void addShadowGroup(ViewRef view, uint instanceIndex, uint groupId, uint views, bool moving)
 {
     CountsRef counts = CountsRef(push.output_counts);
-    const uint slot = atomicAdd(counts.shadowGroups.entries, 1u);
-    if (slot >= view.shadowGroupEnd)
+    const uint staticUsed = moving ? counts.shadowGroups.entries : 0u;
+    const uint slot = moving ? atomicAdd(counts.shadowMovingGroups.entries, 1u) : atomicAdd(counts.shadowGroups.entries, 1u);
+    if (slot + staticUsed >= view.shadowGroupEnd)
     {
-        atomicAdd(counts.shadowGroups.entries, TAKE_BACK);
+        if (moving)
+        {
+            atomicAdd(counts.shadowMovingGroups.entries, TAKE_BACK);
+        }
+        else
+        {
+            atomicAdd(counts.shadowGroups.entries, TAKE_BACK);
+        }
         turnAway(counts);
         return;
     }
     if (slot % GROUPS_PER_WORKGROUP == 0u)
     {
-        atomicAdd(counts.shadowGroups.groups[0], 1u);
+        if (moving)
+        {
+            atomicAdd(counts.shadowMovingGroups.groups[0], 1u);
+        }
+        else
+        {
+            atomicAdd(counts.shadowGroups.groups[0], 1u);
+        }
     }
-    shadowGroups(view).items[slot] = ShadowGroupEntry(instanceIndex, groupId, views);
+    shadowGroups(view).items[moving ? view.shadowGroupEnd - 1u - slot : slot] = ShadowGroupEntry(instanceIndex, groupId, views);
 }
 
-// The views a bound passes: inside the box, and for a static caster on a dirty tile too.
+// A moving caster's views: where its footprint touches a tile some visible pixel reads
+// (asrShadowReceiversC.glsl), and where it is at least a texel wide: a smaller one casts
+// nothing that view can show.
+uint receiverViewsOf(ViewRef view, vec3 relative, float radius, uint candidates)
+{
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    const float size = view.shadowResolution;
+    const float tile = size / float(SHADOW_TILES);
+    uint passed = 0u;
+    for (uint bits = candidates; bits != 0u; bits &= bits - 1u)
+    {
+        const uint v = uint(findLSB(bits));
+        const float texel = shadows.views[v].lightDirection.w;
+        if (radius * 2.0 < texel)
+        {
+            continue;
+        }
+        const vec2 at = ((shadows.views[v].viewProjection * vec4(relative, 1.0)).xy * 0.5 + 0.5) * size;
+        const float reach = radius / texel;
+        const uint columns = shadowTileBits(at.x - reach, at.x + reach, tile);
+        const int first = max(int(floor((at.y - reach) / tile)), 0);
+        const int last = min(int(ceil((at.y + reach) / tile)) - 1, int(SHADOW_TILES) - 1);
+        for (int row = first; row <= last && columns != 0u; ++row)
+        {
+            if ((shadows.receivers[v * SHADOW_TILES + uint(row)] & columns) != 0u)
+            {
+                passed |= 1u << v;
+                break;
+            }
+        }
+    }
+    return passed;
+}
+
+// The views a bound passes: inside the box, then for a static caster on a dirty tile, for a
+// moving one on a receiver tile.
 uint castingViewsOf(ViewRef view, bool moving, vec3 relative, float radius, uint candidates)
 {
     const uint inside = shadowViewsOf(view, relative, radius, candidates);
-    return moving || inside == 0u ? inside : dirtyViewsOf(view, relative, radius, inside);
+    return inside == 0u ? 0u : moving ? receiverViewsOf(view, relative, radius, inside) : dirtyViewsOf(view, relative, radius, inside);
 }
 
 // One LOD's groups or clusters into the views of `views`.
@@ -531,7 +588,7 @@ void castShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry g
             const uint passed = castingViewsOf(view, moving, transformPoint(instance.rows, group.center) - view.camera.xyz, group.radius * scaleBound, views);
             if (passed != 0u)
             {
-                addShadowGroup(view, instanceIndex, geometry.firstGroup + i, passed);
+                addShadowGroup(view, instanceIndex, geometry.firstGroup + i, passed, moving);
             }
         }
         return;
@@ -592,13 +649,16 @@ void selectLod(ViewRef view, uint instanceIndex)
 // `geometry` is the instance's one LOD (selectLod()).
 void cullShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry geometry, float scaleBound)
 {
-    if (view.shadowCascades == 0u)
+    // The early cull takes static casters, at shadow updates only; moving ones are culled
+    // every frame after the final depth (CULL_MOVING), or a moving avatar would sit inside its
+    // own older shadow (user's capture, 26 November 2026).
+    const bool moving = movingCaster(instance);
+    if (view.shadowCascades == 0u || (push.phase == CULL_MOVING) != moving || (!moving && view.shadowUpdate == 0u))
     {
         return;
     }
     ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
     const uint count = shadows.count;
-    const bool moving = movingCaster(instance);
     const vec3 offset = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) - view.camera.xyz;
     const uint views = castingViewsOf(view, moving, offset, geometry.radius * scaleBound, count >= 32u ? 0xFFFFFFFFu : (1u << count) - 1u);
     if (views == 0u)
@@ -608,15 +668,33 @@ void cullShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry g
     castShadows(view, instance, instanceIndex, geometry, scaleBound, views, moving);
 }
 
-// The shadow groups job: as cullGroupClusters(), each cluster tested against its group's views.
-void cullShadowGroupClusters(ViewRef view)
+// The moving cull: one thread per instance, after the final depth, for moving casters alone.
+void cullMoving(ViewRef view, uint instanceIndex)
 {
-    const uint entryIndex = gl_WorkGroupID.x * GROUPS_PER_WORKGROUP + gl_LocalInvocationID.x / CLUSTER_GROUP_SIZE;
-    if (entryIndex >= CountsRef(push.output_counts).shadowGroups.entries)
+    const Instance instance = InstancesRef(push.instances).items[instanceIndex];
+    if (!movingCaster(instance) || !chosenByView(view, instance))
     {
         return;
     }
-    const ShadowGroupEntry entry = shadowGroups(view).items[entryIndex];
+    const Geometry geometry = GeometriesRef(push.geometries).items[LodsRef(view.instanceLods).items[instanceIndex]];
+    if (geometry.clusterCount != 0u)
+    {
+        cullShadows(view, instance, instanceIndex, geometry, scaleBoundOf(instance));
+    }
+}
+
+// The shadow groups jobs: as cullGroupClusters(), each cluster tested against its group's
+// views. CULL_GROUPS_MOVING reads the moving casters' entries, from the end.
+void cullShadowGroupClusters(ViewRef view)
+{
+    const bool moving = push.phase == CULL_GROUPS_MOVING;
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint entryIndex = gl_WorkGroupID.x * GROUPS_PER_WORKGROUP + gl_LocalInvocationID.x / CLUSTER_GROUP_SIZE;
+    if (entryIndex >= (moving ? counts.shadowMovingGroups.entries : counts.shadowGroups.entries))
+    {
+        return;
+    }
+    const ShadowGroupEntry entry = shadowGroups(view).items[moving ? view.shadowGroupEnd - 1u - entryIndex : entryIndex];
     const ClusterGroup group = ClusterGroupsRef(push.clusters).items[entry.group];
     const uint lane = gl_LocalInvocationID.x % CLUSTER_GROUP_SIZE;
     if (lane >= group.clusterCount)
@@ -738,9 +816,17 @@ void main()
         gateMacOITTail();
         return;
     }
-    if (push.phase == CULL_GROUPS_SHADOW)
+    if (push.phase == CULL_GROUPS_SHADOW || push.phase == CULL_GROUPS_MOVING)
     {
         cullShadowGroupClusters(view);
+        return;
+    }
+    if (push.phase == CULL_MOVING)
+    {
+        if (index < view.instanceEnd)
+        {
+            cullMoving(view, index);
+        }
         return;
     }
     if (push.phase == CULL_LOD)

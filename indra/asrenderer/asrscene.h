@@ -170,6 +170,8 @@ constexpr uint32_t CULL_GROUPS_LATE = 4;
 constexpr uint32_t CULL_GROUPS_AUDIT = 5;
 constexpr uint32_t CULL_GROUPS_SHADOW = 7; // the shadow views' groups; 6 is MACOIT_GATE
 constexpr uint32_t CULL_LOD = 8;           // first: each instance's one LOD, for every view (selectLod())
+constexpr uint32_t CULL_MOVING = 9;        // after the final depth: moving casters, where a visible surface reads their shadow
+constexpr uint32_t CULL_GROUPS_MOVING = 10; // their groups
 constexpr uint32_t LOD_UNKNOWN = 0xFFFFFFFFu;
 constexpr uint32_t CULL_GROUPS_PER_WORKGROUP = CULL_GROUP_SIZE / CLUSTER_GROUP_SIZE;
 
@@ -183,6 +185,7 @@ constexpr uint32_t SHADOW_CASCADES = 4;
 constexpr uint32_t MAX_SHADOW_VIEWS = 32;
 constexpr uint32_t SHADOW_VIEW_SHIFT = 26; // instances stay below 1 << 26
 // The static cache (doc/ayanestorm-new-renderer-shadows.md, The design, item 2).
+constexpr uint32_t SHADOW_DEMAND_SLOTS = 65536; // MAX_TEXTURES (asruilist.h): GpuShadowViews::demand
 constexpr uint32_t SHADOW_TILES = 32;          // dirty tiles across a map, a bit each in a row word
 constexpr uint32_t SHADOW_SETTLE_FRAMES = 30;  // frames a moved instance stays moving content
 constexpr uint32_t SHADOW_MAX_DIRTY = 4096;    // world spheres a frame can report; past it, everything is redrawn
@@ -319,7 +322,8 @@ constexpr uint32_t SKIN_CLUSTERS = 5;
 constexpr uint32_t SKIN_GROUPS = 6;
 constexpr uint32_t SKIN_VERTICES_LATE = 7; // same-frame recovery after current-depth culling
 constexpr uint32_t SKIN_AUDIT = 8;         // position checks, after deformation
-constexpr uint32_t SKIN_PHASES = 9;
+constexpr uint32_t SKIN_VERTICES_SHADOW = 9; // casters only a shadow asked for, after the moving cull
+constexpr uint32_t SKIN_PHASES = 10;
 constexpr uint32_t MORPH_NO_MASK = 0xFFFFFFFFu;
 constexpr uint32_t BINDING_ATTACHED = 1;
 constexpr uint32_t BINDING_SKINNED = 2;
@@ -566,8 +570,9 @@ struct GpuSceneCounts
     GpuWorkCount shadowGroups; // groups whose clusters are tested for a shadow view
     GpuDrawArguments shadowMoving[SCENE_LISTS]; // moving casters, from each shadow list's end backwards
     uint32_t shadowUsed[SCENE_LISTS]; // both together, checked against the list's room
+    GpuWorkCount shadowMovingGroups;  // moving casters' groups, from the group entries' end backwards
 };
-static_assert(sizeof(GpuSceneCounts) == 2000, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 2016, "shaders read this layout");
 
 // One shadow view, written by the shadow fit pass. Positions are relative to the camera, as
 // scenePosition() places vertices, so a far region keeps its precision.
@@ -592,12 +597,21 @@ struct GpuShadowViews
     float splits[4];   // each cascade's far distance from the camera, metres
     uint32_t count;    // views filled this frame, 0 with no light to cast
     uint32_t light;    // SHADOW_LIGHT_*
-    float pad[2];
+    uint32_t keep;     // a bit per cascade whose demand bits stay this frame: one drawn whole, or gone, starts again
+    float pad;
     float cachedLight[4]; // the light direction the cache was drawn for, stepped (ASRendererShadowSunStep)
     GpuShadowView views[MAX_SHADOW_VIEWS];
     uint32_t dirty[MAX_SHADOW_VIEWS][SHADOW_TILES]; // a word per tile row, a bit per tile: redraw this frame
+    uint32_t receivers[MAX_SHADOW_VIEWS][SHADOW_TILES]; // tiles a visible pixel reads this frame: moving casters go only there
+    // What the cached maps hold of each texture slot, as texture feedback (asrShadowFitC.glsl
+    // adds it every frame): a bit per level (1 << level, FEEDBACK_MAX_LEVEL + 1 levels) per
+    // cascade, cascades 0-1 in the first word and 2-3 in the second. Drawn by asrShadowMaskedF,
+    // cleared with a cascade's full redraw. Without it a texture only a shadow showed (a leaf
+    // canopy off screen) lost its size, and its shadow changed shape as the camera turned.
+    uint32_t demand[SHADOW_DEMAND_SLOTS][2];
 };
-static_assert(sizeof(GpuShadowViews) == 48 + MAX_SHADOW_VIEWS * 224 + MAX_SHADOW_VIEWS * SHADOW_TILES * 4, "shaders read this layout");
+static_assert(sizeof(GpuShadowViews) == 48 + MAX_SHADOW_VIEWS * 224 + 2 * MAX_SHADOW_VIEWS * SHADOW_TILES * 4 + SHADOW_DEMAND_SLOTS * 8,
+              "shaders read this layout");
 static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolve.glsl's GUARD_OFFSET");
 static_assert(offsetof(GpuSceneCounts, macoitTailSeen) == 832, "asrSceneMacOIT.glsl's MACOIT_TAIL_SEEN_OFFSET");
 static_assert(offsetof(GpuSceneCounts, skinAuditSamples) == 836, "asrSceneSkinAudit.glsl's counter offset");
@@ -760,6 +774,9 @@ constexpr uint32_t DEBUG_VIEW_CLUSTERS = 4;   // one colour per drawn cluster
 constexpr uint32_t DEBUG_VIEW_NO_OCCLUSION = 5; // shaded, with occlusion culling off
 // 6 and 7 are shader-only: see asrSceneCommon.glsl.
 constexpr uint32_t DEBUG_VIEW_SHADOW_CASCADES = 8; // each pixel's cascade as a colour, dark where shadowed; grey past them
+constexpr uint32_t DEBUG_VIEW_NO_CONTACT = 9;      // shaded without contact shadows
+constexpr uint32_t DEBUG_VIEW_SHADOW_PATH = 11;    // the shadow filter's path: green box, yellow box with high blockers, magenta disc
+constexpr uint32_t DEBUG_VIEW_SHADOW_CAUSE = 10;   // why the sun or moon does not reach: red normal away, yellow inverted, blue to green the maps
 
 // A look-at camera with reversed depth and no far plane. World space is the viewer's:
 // right-handed, Z up. Y comes out flipped, as Vulkan wants it, and asr_spirv2msl turns
@@ -829,7 +846,7 @@ struct GpuSceneView
     uint32_t shadowDirtyCount; // spheres at shadowDirty
     uint64_t shadowDirty;     // world spheres (x, y, z, radius) whose cached shadow is stale; a negative radius: all
     float shadowLightStep;    // cosine of ASRendererShadowSunStep: the cache's light moves when the light leaves it
-    uint32_t shadowPad;
+    uint32_t shadowUpdate;    // 1: the shadow maps are redrawn this frame; 0: every reader uses the last ones (ASRendererShadowInterval)
     uint64_t instanceLods;    // a word per instance: the LOD every view draws it with, chosen by CULL_LOD; LOD_UNKNOWN when new
 };
 

@@ -35,6 +35,7 @@ const uint SKIN_CLUSTERS = 5u;
 const uint SKIN_GROUPS = 6u;
 const uint SKIN_VERTICES_LATE = 7u;
 const uint SKIN_AUDIT = 8u;
+const uint SKIN_VERTICES_SHADOW = 9u; // casters only a shadow asked for, after the moving cull
 const uint SKIN_BLOCK = 64u;
 const uint MAX_LODS = 4u;
 const uint MORPH_NO_MASK = 0xFFFFFFFFu;
@@ -374,9 +375,10 @@ void skinVertex(ViewRef view)
     // never reads old positions. Normal frames deform only actual draw consumers.
     if (view.skinAudit != 0u)
     {
-        if (push.phase == SKIN_VERTICES_LATE) return;
+        if (push.phase != SKIN_VERTICES) return;
     }
-    else if (binding.skinDemand != (push.phase == SKIN_VERTICES_LATE ? SKIN_DEMAND_LATE : SKIN_DEMAND_EARLY)) return;
+    else if (binding.skinDemand != (push.phase == SKIN_VERTICES_LATE ? SKIN_DEMAND_LATE
+                                  : push.phase == SKIN_VERTICES_SHADOW ? SKIN_DEMAND_SHADOW : SKIN_DEMAND_EARLY)) return;
     const uint vertex = block * SKIN_BLOCK + gl_LocalInvocationID.x;
     const Geometry lod = GeometriesRef(push.geometries).items[binding.chosen];
     const Cluster first = ClustersRef(push.clusters).items[lod.firstCluster];
@@ -592,6 +594,7 @@ void main()
             break;
         case SKIN_VERTICES:
         case SKIN_VERTICES_LATE:
+        case SKIN_VERTICES_SHADOW:
             skinVertex(view);
             break;
         case SKIN_CLUSTERS:

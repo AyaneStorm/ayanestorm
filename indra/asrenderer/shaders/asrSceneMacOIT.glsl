@@ -209,7 +209,9 @@ void main()
     const Material material = MaterialsRef(push.materials).items[vary_material];
     vec3 normal = normalize(vary_normal);
     normal = dot(normal, vary_toCamera) < 0.0 ? -normal : normal;
-    const vec2 shadow = sunMoonShadow(-vary_toCamera, normal); // offset along the surface's own normal, before maps
+    const vec3 face = cross(dFdx(vary_toCamera), dFdy(vary_toCamera)); // the triangle's own face
+    const vec3 seen = dot(face, vary_toCamera) < 0.0 ? -face : face;    // the side seen
+    const vec2 shadow = sunMoonShadow(-vary_toCamera, normal, seen); // offset along the surface's own normal, before maps
     const vec2 faceDx = dFdx(vary_faceUV);
     const vec2 faceDy = dFdy(vary_faceUV);
     vec4 normalSample = vec4(0.5, 0.5, 1.0, 1.0);
@@ -240,7 +242,7 @@ void main()
     color.rgb = shadeLegacy(loadAtmosphere(ViewRef(push.view).atmosphere), surface, normalize(vary_toCamera));
     if (ViewRef(push.view).debugView == DEBUG_VIEW_ALPHA_MODE)
     {
-        color.rgb = vec3(0.9, 0.1, 0.1); // blended, at its own alpha
+        color.rgb = vec3(0.9, 0.1, 0.1) / max(ExposureRef(ViewRef(push.view).exposure).exposure, 1e-20); // blended, at its own alpha, shown as is
     }
     else
     {

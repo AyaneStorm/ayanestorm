@@ -364,6 +364,7 @@ public:
         // RenderShadowDetail 0 keeps a 1 texel map: the set always names one.
         mShadowCascades = input.shadow.detail > 0 ? SHADOW_CASCADES : 0;
         mShadowLightStep = std::cos(std::max(input.shadow.sunStep, 0.f) * 0.0174532925f);
+        mShadowInterval = input.shadow.interval;
         mWantedShadowSize = mShadowCascades != 0 ? shadowMapSize(mMemoryBudget.budget(), input.shadow.resolutionScale) : 1;
         if (input.camera && !ensureSceneTargets())
         {
@@ -1615,7 +1616,9 @@ private:
         shift.shadow = true;
         shift.depthAlways = true; // every texel written, from the cache or empty
         mShadowShiftPipeline = mShadowMaskedPipeline ? createSceneRasterPipeline("asrShadowShiftV", "asrShadowShiftF", shift, error) : VK_NULL_HANDLE;
-        if (!mShadowShiftPipeline ||
+        mShadowReceiversPipeline = mShadowShiftPipeline ? createComputePipeline("asrShadowReceiversC", error) : VK_NULL_HANDLE;
+        mShadowDemandPipeline = mShadowReceiversPipeline ? createComputePipeline("asrShadowDemandC", error) : VK_NULL_HANDLE;
+        if (!mShadowDemandPipeline ||
             !createBufferObject(mShadowViews, sizeof(GpuShadowViews), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "shadow views",
                                 MemoryCategory::Shadows, true))
         {
@@ -1707,14 +1710,16 @@ private:
         {
             destroyBuffer(spheres, MemoryCategory::Staging);
         }
-        for (VkPipeline pipeline : { mShadowFitPipeline, mShadowPipeline, mShadowMaskedPipeline, mShadowShiftPipeline })
+        for (VkPipeline pipeline : { mShadowFitPipeline, mShadowPipeline, mShadowMaskedPipeline, mShadowShiftPipeline, mShadowReceiversPipeline,
+                                     mShadowDemandPipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
                 vkDestroyPipeline(mDevice, pipeline, nullptr);
             }
         }
-        mShadowFitPipeline = mShadowPipeline = mShadowMaskedPipeline = mShadowShiftPipeline = VK_NULL_HANDLE;
+        mShadowFitPipeline = mShadowPipeline = mShadowMaskedPipeline = mShadowShiftPipeline = mShadowReceiversPipeline = VK_NULL_HANDLE;
+        mShadowDemandPipeline = VK_NULL_HANDLE;
     }
 
     void destroyTarget(TargetImage& target)
@@ -3704,6 +3709,11 @@ private:
                     mRetiredTextures.add(command.slot, command.lastList);
                     break;
             }
+            if (command.type == TextureCommand::Type::Upload || command.type == TextureCommand::Type::GenerateMips ||
+                command.type == TextureCommand::Type::Publish)
+            {
+                mSceneStore.textureChanged(command.slot); // cached shadows cut with it are redrawn
+            }
         }
         mFrameParts.textureUploadBytes = uploaded;
         mFrameParts.textureCommandsLeft = uint32_t(mTextureCommands.size() - i);
@@ -4133,7 +4143,18 @@ private:
         view.instanceLods = mInstanceLods.address;
         fillShadowView(view, mShadowCascades, mSunShadowSize, mShadowViews.address, mShadowLists.address);
         view.shadowLightStep = mShadowLightStep;
-        view.shadowDirtyCount = mSceneStore.copyShadowDirty(static_cast<float*>(mShadowDirty[slot].mapped));
+        // The maps are redrawn every ASRendererShadowInterval (the user's exception to the
+        // every-frame rule); between updates every reader uses the last ones, and what went
+        // stale meanwhile is gathered for the next update.
+        mSceneStore.gatherShadowDirty(mShadowGathered, mShadowGatheredRebake);
+        mShadowUpdate = mShadowReset || mShadowInterval <= 0.f ||
+                        std::chrono::duration<float, std::milli>(mRecordTime - mLastShadowUpdate).count() >= mShadowInterval;
+        if (mShadowUpdate)
+        {
+            mLastShadowUpdate = mRecordTime;
+        }
+        view.shadowUpdate = mShadowUpdate ? 1 : 0;
+        view.shadowDirtyCount = mShadowUpdate ? fillShadowDirty(mShadowGathered, mShadowGatheredRebake, static_cast<float*>(mShadowDirty[slot].mapped)) : 0;
         vmaFlushAllocation(mAllocator, mShadowDirty[slot].allocation, 0, uint64_t(view.shadowDirtyCount) * 16);
         address.buffer = mShadowDirty[slot].buffer;
         view.shadowDirty = vkGetBufferDeviceAddress(mDevice, &address);
@@ -4194,7 +4215,11 @@ private:
         {
             vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, shadowGroups));
         }
-        else if (phase == CULL_LOD)
+        else if (phase == CULL_GROUPS_MOVING)
+        {
+            vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, shadowMovingGroups));
+        }
+        else if (phase == CULL_LOD || phase == CULL_MOVING)
         {
             vkCmdDispatch(commands, (mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1);
         }
@@ -4322,6 +4347,12 @@ private:
     // The working map, static casters drawn, becomes next frame's cache.
     bool passShadowStore()
     {
+        if (!mShadowUpdate)
+        {
+            return true;
+        }
+        // The dirty tiles are drawn: marks gathered until the next update start from none.
+        vkCmdFillBuffer(mRecordCommands, mShadowViews.buffer, offsetof(GpuShadowViews, dirty), sizeof(GpuShadowViews::dirty), 0);
         VkImageCopy region{};
         region.srcSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, SHADOW_CASCADES };
         region.dstSubresource = region.srcSubresource;
@@ -4334,6 +4365,10 @@ private:
     // Static casters into dirty tiles, or moving ones on top (SHADOW_DRAW_*).
     bool passShadowDraw(uint32_t phase)
     {
+        if (!mShadowUpdate && phase == SHADOW_DRAW_STATIC)
+        {
+            return true; // moving casters are drawn every frame
+        }
         VkCommandBuffer commands = mRecordCommands;
         beginShadowRendering(commands, true);
         mScenePush.phase = phase;
@@ -4455,7 +4490,8 @@ private:
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
         const PassId skinPasses[SKIN_PHASES] = { PassSkinPose, PassSkinPalette, PassSkinBind, PassSkinMorph,
-                                               PassSkinVertices, PassSkinClusters, PassSkinGroups, PassSkinVerticesLate, PassSkinAudit };
+                                               PassSkinVertices, PassSkinClusters, PassSkinGroups, PassSkinVerticesLate, PassSkinAudit,
+                                               PassSkinVerticesShadow };
         for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
         {
             mGraph.setBody(skinPasses[phase], [this, phase]()
@@ -4464,6 +4500,14 @@ private:
             });
         }
         mGraph.setBody(PassShadowFit, [this]() { return passShadowFit(); });
+        mGraph.setBody(PassShadowDemand, [this]()
+        {
+            VkCommandBuffer commands = mRecordCommands;
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mShadowDemandPipeline);
+            pushScene(commands);
+            vkCmdDispatch(commands, SHADOW_DEMAND_SLOTS / 256, 1, 1);
+            return true;
+        });
         mGraph.setBody(PassLodSelect, [this]()
         {
             if (mLodReset)
@@ -4479,6 +4523,18 @@ private:
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
         mGraph.setBody(PassShadowGroups, [this]() { return passCull(CULL_GROUPS_SHADOW); });
+        mGraph.setBody(PassShadowReceivers, [this]()
+        {
+            VkCommandBuffer commands = mRecordCommands;
+            const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mShadowReceiversPipeline);
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+            pushScene(commands);
+            vkCmdDispatch(commands, (mSceneExtent.width + 15) / 16, (mSceneExtent.height + 15) / 16, 1);
+            return true;
+        });
+        mGraph.setBody(PassShadowMovingCull, [this]() { return passCull(CULL_MOVING); });
+        mGraph.setBody(PassShadowMovingGroups, [this]() { return passCull(CULL_GROUPS_MOVING); });
         mGraph.setBody(PassShadowShift, [this]() { return passShadowShift(); });
         mGraph.setBody(PassShadowDraw, [this]() { return passShadowDraw(SHADOW_DRAW_STATIC); });
         mGraph.setBody(PassShadowStore, [this]() { return passShadowStore(); });
@@ -4633,6 +4689,8 @@ private:
 
         mSceneFrameStats.instances = mSceneInstanceEnd;
         mSceneFrameStats.triangles = mSceneStore.triangles();
+        mSceneFrameStats.movingInstances = mSceneStore.movingInstances();
+        mSceneFrameStats.skinnedBindings = mSceneStore.skinnedBindings();
         mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
         mSceneFrameStats.chunks = mSceneStore.chunkCount();
         mSceneFrameStats.paletteEnd = mSceneStore.rangeEnd(SceneTable::Palette);
@@ -5110,11 +5168,18 @@ private:
     bool mLodReset = true;
     MappedBuffer mShadowDirty[FRAMES_IN_FLIGHT]; // GpuSceneView::shadowDirty, per slot
     VkPipeline mShadowShiftPipeline = VK_NULL_HANDLE;
+    VkPipeline mShadowReceiversPipeline = VK_NULL_HANDLE;
+    VkPipeline mShadowDemandPipeline = VK_NULL_HANDLE;
     bool mShadowReset = true; // new maps: the views buffer is cleared, so every cascade is redrawn
     uint32_t mSunShadowSize = 0;
     uint32_t mWantedShadowSize = 1; // from ShadowInput, each frame
     uint32_t mShadowCascades = 0;   // 0: RenderShadowDetail 0
     float mShadowLightStep = 1.f;   // GpuSceneView::shadowLightStep
+    float mShadowInterval = 30.f;   // ASRendererShadowInterval, milliseconds
+    bool mShadowUpdate = true;      // GpuSceneView::shadowUpdate, this frame
+    std::chrono::steady_clock::time_point mLastShadowUpdate{};
+    std::vector<float> mShadowGathered; // stale spheres since the last update
+    bool mShadowGatheredRebake = false;
     VkPipeline mShadowFitPipeline = VK_NULL_HANDLE;
     VkPipeline mShadowPipeline = VK_NULL_HANDLE;
     VkPipeline mShadowMaskedPipeline = VK_NULL_HANDLE;

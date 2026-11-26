@@ -93,6 +93,7 @@ enum ScenePass : PassId
     PassSkinClusters,
     PassSkinGroups,
     PassShadowFit,     // the cascades, from last frame's depth
+    PassShadowDemand,  // what the cached maps show of each texture, into the texture feedback
     PassLodSelect,     // each instance's one LOD, for every view; marks cached shadows it changes
     PassCullEarly,     // the main view and every shadow view
     PassGroupsEarly,
@@ -106,6 +107,10 @@ enum ScenePass : PassId
     PassSkinVerticesLate,
     PassDrawLate,
     PassPyramidFinal,
+    PassShadowReceivers, // from the final depth: per cascade, the tiles a visible pixel reads
+    PassShadowMovingCull, // moving casters, only where a receiver tile can take their shadow
+    PassShadowMovingGroups,
+    PassSkinVerticesShadow, // avatars only a shadow asked for
     PassShadowShift,   // the static cache into the working map, scrolled, dirty tiles emptied
     PassShadowDraw,    // static casters into dirty tiles, every shadow view in one draw per list
     PassShadowStore,   // the working map back into the cache

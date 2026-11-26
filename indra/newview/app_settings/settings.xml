@@ -11965,7 +11965,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASRendererDebugView</key>
   <map>
     <key>Comment</key>
-    <string>Development only: what the new renderer shows instead of the shaded scene. 0 shaded, 1 normals as colours, 2 surface colour with no light, 3 how faces are drawn (grey opaque, green cut-out, red blended), 4 one colour per drawn cluster, 5 shaded with occlusion culling off, 6 shaded without environment reflections, 7 shaded without sun and moon highlights.</string>
+    <string>Development only: what the new renderer shows instead of the shaded scene. 0 shaded, 1 normals as colours, 2 surface colour with no light, 3 how faces are drawn (grey opaque, green cut-out, red blended), 4 one colour per drawn cluster, 5 shaded with occlusion culling off, 6 shaded without environment reflections, 7 shaded without sun and moon highlights, 8 shadow cascades as colours (dark where shadowed), 9 shaded without contact shadows, 10 why the sun or moon does not reach (red: normal faces away, yellow: inverted normals, blue to green: shadow maps, shadowed to lit), 11 the shadow filter's path (green: 4 by 4 box, yellow: box with high blockers about, magenta: soft disc; brighter where lit).</string>
     <key>Persist</key>
     <integer>0</integer>
     <key>Type</key>
@@ -12038,6 +12038,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <string>F32</string>
     <key>Value</key>
     <real>0.04</real>
+  </map>
+  <key>ASRendererShadowInterval</key>
+  <map>
+    <key>Comment</key>
+    <string>New renderer: milliseconds between updates of the cached shadows of things that do not move (the cascades' place, new strips, changed objects). Moving things and avatars cast their shadows every frame. 0 updates everything every frame.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>30.0</real>
   </map>
   <key>ASRendererShadowSunStep</key>
   <map>

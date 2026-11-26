@@ -104,6 +104,11 @@ using Clock = std::chrono::steady_clock;
 bool sOverlays = false; // --overlay
 asr::SkyInput sSky = asr::earthSky(); // --sky
 bool sSkyView = false; // --sky-view
+bool sCalm = false;    // --calm: see TestCity::calm
+std::string sFramesDir; // --frames DIR COUNT: consecutive captures from the screenshot time on
+uint32_t sFramesLeft = 0;
+uint32_t sFramesTaken = 0;
+float sCameraSpeed = 1.f; // --camera-speed: the orbit's pace, slower for frame-to-frame comparisons
 bool sLookMoon = false; // --look-moon
 bool sLookSun = false;  // --look-sun: level, towards the sun's azimuth
 std::string sMoonMaps;  // --moon-maps DIR
@@ -3103,7 +3108,12 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     expect(probe.supported, "probe accepts this machine");
 
     asrtest::TestWindow window;
-    if (!window.create(windowWidth, windowHeight, "asrenderer_test"))
+    // The run's settings in the title, so whoever watches can say which window did what.
+    std::string title = "asrenderer_test";
+    title += sCalm ? " - calm" : "";
+    title += sShadow.detail == 0 ? " - shadows OFF" : " - shadows ON";
+    title += sShadow.interval > 0.f ? " (static every " + std::to_string(int(sShadow.interval)) + " ms)" : " (every frame)";
+    if (!window.create(windowWidth, windowHeight, title.c_str()))
     {
         printf("FAIL  cannot open a window\n");
         return 1;
@@ -3152,7 +3162,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         if (drawScene)
         {
             state.hasCamera = true;
-            state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
+            state.camera = city->camera(float(secondsSince(sceneStart)) * sCameraSpeed, state.width, state.height);
             state.camera.debugView = sDebugView;
             state.shadow = sShadow;
             state.sky = sSky;
@@ -3185,6 +3195,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     {
         city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
         city->skyView = sSkyView;
+        city->calm = sCalm;
         if (sLookMoon)
         {
             // The disc fills about 70% of the window's height, or the halo 90% of it.
@@ -3307,9 +3318,23 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             if (sScreenshotWanted && renderThread.takeCapture(shot))
             {
                 sScreenshotWanted = false;
-                const bool saved = writePng(sScreenshot, shot.width, shot.height, shot.rgba);
-                printf("%s  screenshot %s (%u x %u)\n", saved ? "ok  " : "FAIL", sScreenshot.c_str(), shot.width, shot.height);
-                sScreenshot.clear(); // once
+                if (sFramesLeft > 0)
+                {
+                    // --frames: every capture as it comes, to measure what changes between frames.
+                    char name[32];
+                    snprintf(name, sizeof(name), "/frame%03u.png", sFramesTaken++);
+                    if (!writePng(sFramesDir + name, shot.width, shot.height, shot.rgba))
+                    {
+                        printf("FAIL  frame %s\n", name);
+                    }
+                    sScreenshotWanted = --sFramesLeft > 0;
+                }
+                else
+                {
+                    const bool saved = writePng(sScreenshot, shot.width, shot.height, shot.rgba);
+                    printf("%s  screenshot %s (%u x %u)\n", saved ? "ok  " : "FAIL", sScreenshot.c_str(), shot.width, shot.height);
+                    sScreenshot.clear(); // once
+                }
             }
             else if (!sScreenshotWanted)
             {
@@ -3411,7 +3436,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         expect(highestLevel <= asr::FEEDBACK_MAX_LEVEL, "feedback levels stay in range");
         expect(stats.earlyClusters > 0, "the camera sees part of the scene");
         expect(stats.pendingGeometries == 0, "all geometry reached the GPU");
-        expect(city->replaced() > 0, "geometry was replaced while drawing");
+        expect(sCalm || city->replaced() > 0, "geometry was replaced while drawing"); // --calm replaces none
         if (audit)
         {
             printf("audit: %llu frames, %llu pixels lost\n", (unsigned long long)stats.auditedFrames, (unsigned long long)stats.auditErrorPixels);
@@ -3580,6 +3605,20 @@ int main(int argc, char** argv)
         {
             sTone.exposure = std::stof(argv[++i]); // RenderExposure: lifts faint skies into view
         }
+        else if (arg == "--calm")
+        {
+            sCalm = true;
+        }
+        else if (arg == "--frames" && i + 2 < argc)
+        {
+            sFramesDir = argv[++i];
+            sFramesLeft = uint32_t(std::stoul(argv[++i]));
+            sScreenshot = sFramesDir; // starts the captures at the screenshot time
+        }
+        else if (arg == "--camera-speed" && i + 1 < argc)
+        {
+            sCameraSpeed = std::stof(argv[++i]);
+        }
         else if (arg == "--debug-view" && i + 1 < argc)
         {
             sDebugView = uint32_t(std::stoul(argv[++i])); // a DEBUG_VIEW_* of asrscene.h
@@ -3591,6 +3630,10 @@ int main(int argc, char** argv)
         else if (arg == "--shadow-scale" && i + 1 < argc)
         {
             sShadow.resolutionScale = std::stof(argv[++i]); // RenderShadowResolutionScale
+        }
+        else if (arg == "--shadow-interval" && i + 1 < argc)
+        {
+            sShadow.interval = std::stof(argv[++i]); // ASRendererShadowInterval
         }
         else if (arg == "--shadow-sun-step" && i + 1 < argc)
         {

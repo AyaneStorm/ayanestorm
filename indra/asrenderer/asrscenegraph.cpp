@@ -66,7 +66,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("resolve tiles", ResultScope::Frame);
     graph.addResult("shadow views", ResultScope::Persistent); // last frame's windows place this frame's cache
     graph.addResult("shadow lists", ResultScope::Frame);
-    graph.addResult("sun shadow", ResultScope::Frame);
+    graph.addResult("sun shadow", ResultScope::Persistent); // read as is between updates (ASRendererShadowInterval)
     graph.addResult("shadow cache", ResultScope::Persistent);
     graph.addResult("instance lods", ResultScope::Persistent);
 
@@ -80,9 +80,11 @@ void declareSceneGraph(FrameGraph& graph)
     {
         graph.addPass(name, { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     }
-    // The cascades from last frame's farthest depth, before the cull that reads them.
-    graph.addPass("shadow fit", { { ResultDepthPyramid, ComputeRead | PreviousFrame },
-                                  { ResultShadowViews, ComputeRead | ComputeWrite | Keep } });
+    // The cascades, before the cull that reads them.
+    graph.addPass("shadow fit", { { ResultShadowViews, ComputeRead | ComputeWrite | Keep } });
+    // What the cached maps show of each texture, into the texture feedback (asrShadowDemandC).
+    graph.addPass("shadow demand", { { ResultShadowViews, ComputeRead | ComputeWrite | Keep },
+                                     { ResultTextureFeedback, ComputeWrite | Keep } });
     // Each instance's LOD, read by every cull below; a changed one marks its cached shadow dirty.
     graph.addPass("lod select", { { ResultSceneData, ComputeRead },
                                   { ResultShadowViews, ComputeRead | ComputeWrite | Keep },
@@ -138,20 +140,38 @@ void declareSceneGraph(FrameGraph& graph)
                                  { ResultVisibility, ColorTarget | Keep },
                                  { ResultDepth, DepthTarget | Keep } });
     graph.addPass("pyramid final", { { ResultDepth, ComputeRead }, { ResultDepthPyramid, ComputeWrite | Keep } });
+    // Moving casters after the final depth (asrShadowReceiversC.glsl): drawn into a cascade
+    // only where a visible pixel reads it, then skinned if nothing else asked.
+    graph.addPass("shadow receivers", { { ResultDepth, ComputeRead | Keep },
+                                        { ResultShadowViews, ComputeRead | ComputeWrite | Keep } });
+    graph.addPass("shadow moving cull", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
+                                          { ResultInstanceLods, ComputeRead },
+                                          { ResultShadowViews, ComputeRead },
+                                          { ResultDrawArguments, ComputeWrite | Keep },
+                                          { ResultShadowLists, ComputeWrite | Keep } });
+    graph.addPass("shadow moving groups", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
+                                            { ResultShadowViews, ComputeRead },
+                                            { ResultDrawArguments, Indirect | ComputeWrite | Keep },
+                                            { ResultShadowLists, ComputeRead | ComputeWrite | Keep } });
+    graph.addPass("skin vertices shadow", { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     // The static cache (see asrShadowShiftF.glsl): shifted into the working map, static
     // casters drawn into its dirty tiles, copied back, then moving casters on top.
     graph.addPass("shadow shift", { { ResultShadowViews, FragmentRead },
                                     { ResultShadowCache, FragmentRead | PreviousFrame },
-                                    { ResultSunShadow, DepthTarget } });
+                                    { ResultSunShadow, DepthTarget | Keep } });
+    // Masked casters add the texture levels they read to GpuShadowViews::demand.
     graph.addPass("shadow draw", { { ResultSceneData, VertexRead },
                                    { ResultDrawArguments, Indirect },
-                                   { ResultShadowViews, VertexRead },
+                                   { ResultShadowViews, VertexRead | FragmentRead | FragmentWrite | Keep },
                                    { ResultShadowLists, VertexRead },
                                    { ResultSunShadow, DepthTarget | Keep } });
-    graph.addPass("shadow store", { { ResultSunShadow, CopyRead | Keep }, { ResultShadowCache, CopyWrite } });
+    // Also clears the dirty tiles it has drawn: marks gathered until the next update add up.
+    graph.addPass("shadow store", { { ResultSunShadow, CopyRead | Keep },
+                                    { ResultShadowCache, CopyWrite },
+                                    { ResultShadowViews, CopyWrite | Keep } });
     graph.addPass("shadow moving", { { ResultSceneData, VertexRead },
                                      { ResultDrawArguments, Indirect },
-                                     { ResultShadowViews, VertexRead },
+                                     { ResultShadowViews, VertexRead | FragmentRead | FragmentWrite | Keep },
                                      { ResultShadowLists, VertexRead },
                                      { ResultSunShadow, DepthTarget | Keep } });
     // The sky's tables, rebuilt every frame since EEP skies blend: each reads the ones before.
@@ -170,6 +190,7 @@ void declareSceneGraph(FrameGraph& graph)
                                 { ResultVisibility, ComputeRead },
                                 { ResultResolveTiles, ComputeWrite } });
     graph.addPass("resolve", { { ResultSceneData, ComputeRead },
+                               { ResultDepth, ComputeRead | Keep }, // contact shadows
                                { ResultVisibleClusters, ComputeRead },
                                { ResultVisibility, ComputeRead },
                                { ResultResolveTiles, Indirect | ComputeRead },

@@ -4434,7 +4434,8 @@ void logCounts()
             gpuTotal += stats.passes[i].milliseconds;
         }
         LL_INFOS("ASRenderer") << "GPU ms " << gpuTotal << timings.str() << ", shadow clusters static " << stats.shadowClusters << " moving "
-                               << stats.shadowMovingClusters << ", retest entries " << stats.retestEntries << ", groups " << stats.groupEntries
+                               << stats.shadowMovingClusters << " (moving instances " << stats.movingInstances << ", skinned faces " << stats.skinnedBindings
+                               << "), retest entries " << stats.retestEntries << ", groups " << stats.groupEntries
                                << ", chunks " << stats.chunks << ", skin work run/in use: palette " << stats.paletteEnd << "/" << stats.paletteLive << ", vertex blocks "
                                << stats.vertexBlockEnd << "/" << stats.vertexBlockLive << ", cluster blocks " << stats.clusterBlockEnd << "/"
                                << stats.clusterBlockLive << LL_ENDL;

@@ -956,6 +956,8 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.shadow.resolutionScale = llmax(F32(shadowScale()), 0.f);
     static LLCachedControl<F32> sunStep(gSavedSettings, "ASRendererShadowSunStep", 0.25f);
     state.shadow.sunStep = llclamp(F32(sunStep()), 0.f, 10.f);
+    static LLCachedControl<F32> shadowInterval(gSavedSettings, "ASRendererShadowInterval", 30.f);
+    state.shadow.interval = llclamp(F32(shadowInterval()), 0.f, 1000.f);
     // Everything read from the viewer's world: see worldReady().
     if (worldReady())
     {
