@@ -517,11 +517,11 @@ vec2 underSun(Atmosphere a)
 
 // The arch's source, once per frame (the exposure pass, then GpuExposure::twilightBand): the
 // sky one degree above the horizon under the sun, its Mie peak capped at 6 degrees from the
-// sun so a sun near the horizon does not flare it, weighted in from sun +10 to -4 degrees
-// (from +2 the low sun's sky turned dull grey in one step).
+// sun so a sun near the horizon does not flare it, weighted in from sun 0 to -6 degrees: the
+// sun on the horizon and above keeps its sky as it was (user: yesterday's sunsets).
 vec3 twilightBand(Atmosphere a)
 {
-    const float weight = 1.0 - smoothstep(sin(radians(-4.0)), sin(radians(10.0)), a.sunDirection.z);
+    const float weight = 1.0 - smoothstep(sin(radians(-6.0)), 0.0, a.sunDirection.z);
     if (weight <= 0.0)
     {
         return vec3(0.0);
@@ -534,6 +534,24 @@ vec3 twilightBand(Atmosphere a)
     const vec3 sun = sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN)
                      + sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN_MIE) * (miePhase(a.mieG, -sunCos) * set);
     return sun * a.sunIlluminance * weight;
+}
+
+vec3 twilightArch(Atmosphere a, vec3 band, vec3 direction);
+
+// twilightSky(), the sky with the arch: from sun -4 to -10 degrees the model's own sunlit sky hands over to
+// the arch, which carries the band's light in real twilight's shape (user, viewer at sun -13.5
+// with a hazy EEP: the model's band stayed a hard saturated red stripe under the arch).
+// The sun's part of twilightSky(), for what fades in the sunlit sky only (the stars).
+vec3 twilightSunSky(Atmosphere a, vec3 band, vec3 direction)
+{
+    const float model = smoothstep(sin(radians(-10.0)), sin(radians(-4.0)), a.sunDirection.z);
+    return sunSkyRadiance(a, direction) * model + twilightArch(a, band, direction);
+}
+
+vec3 twilightSky(Atmosphere a, vec3 band, vec3 direction)
+{
+    return twilightSunSky(a, band, direction) + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight
+         + airglow(direction);
 }
 
 // The arch's light in a world direction, from the frame's band.

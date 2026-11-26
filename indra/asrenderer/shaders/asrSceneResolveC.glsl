@@ -278,7 +278,7 @@ vec3 milkyWay(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 // radians. The stars are the viewer's catalogue (ASStars), drawn by their own pass.
 vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 {
-    vec3 luminance = skyRadiance(a, direction) + twilightArch(a, ExposureRef(ViewRef(push.view).exposure).twilightBand, direction);
+    vec3 luminance = twilightSky(a, ExposureRef(ViewRef(push.view).exposure).twilightBand, direction);
     const vec3 position = atmosphereCamera(a);
     if (raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0)
     {
@@ -357,7 +357,7 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
             }
         }
     }
-    return min(shown, vec3(60000.0)); // inside half floats
+    return shown; // kept inside half floats once exposed, where the lit image is written
 }
 
 vec4 unlit(vec3 albedo, vec3 normal)
@@ -539,7 +539,9 @@ void main()
         const float pixelAngle = 2.0 / (view.pixelSize.x * view.projection.x);
         // Pre-exposed: night light falls far below what the half-float target keeps.
         const vec3 sky = background(pixel, loadAtmosphere(view.atmosphere), viewDirection(view, ndc), pixelAngle);
-        imageStore(lit, pixel, vec4(sky * ExposureRef(view.exposure).exposure, 0.0));
+        // Inside half floats after exposure: an infinite sun made bloom spread over the clouds in
+        // front of it (user: the sun no longer hidden by clouds).
+        imageStore(lit, pixel, vec4(min(sky * ExposureRef(view.exposure).exposure, vec3(60000.0)), 0.0));
         return;
     }
 
@@ -690,5 +692,5 @@ void main()
         shown = vec4(vec3(hash & 255u, (hash >> 8) & 255u, (hash >> 16) & 255u) / 255.0, 1.0);
     }
     // Pre-exposed, as the sky above.
-    imageStore(lit, pixel, vec4(shown.rgb * ExposureRef(view.exposure).exposure, shown.a));
+    imageStore(lit, pixel, vec4(min(shown.rgb * ExposureRef(view.exposure).exposure, vec3(60000.0)), shown.a));
 }

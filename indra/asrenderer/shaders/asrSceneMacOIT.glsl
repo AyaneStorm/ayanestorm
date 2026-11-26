@@ -199,7 +199,7 @@ void main()
     }
 #endif
     // Pre-exposed, as the opaque image it blends over.
-    color.rgb *= ExposureRef(ViewRef(push.view).exposure).exposure;
+    color.rgb = min(color.rgb * ExposureRef(ViewRef(push.view).exposure).exposure, vec3(60000.0));
     // Helpers must participate in the derivatives above, but can lie outside the viewport.
     // Their ordinary buffer reads are not suppressed like atomic writes: stop before OIT.
     if (gl_HelperInvocation)

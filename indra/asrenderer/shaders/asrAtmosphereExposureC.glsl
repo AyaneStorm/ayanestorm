@@ -44,11 +44,11 @@ void main()
         const float phi = 2.0 * ATMOSPHERE_PI * u.y;
         const float r = sqrt(u.x);
         const vec3 cosine = vec3(r * cos(phi), r * sin(phi), sqrt(max(1.0 - u.x, 0.0)));
-        cosineSum += skyRadiance(a, cosine) + twilightArch(a, band, cosine);
+        cosineSum += twilightSky(a, band, cosine);
         const float z = u.x;
         const float side = sqrt(max(1.0 - z * z, 0.0));
         const vec3 uniform_ = vec3(side * cos(phi), side * sin(phi), z);
-        uniformSum += skyRadiance(a, uniform_) + twilightArch(a, band, uniform_);
+        uniformSum += twilightSky(a, band, uniform_);
     }
     sharedSums[thread] = vec4(cosineSum, dot(uniformSum, LUMINANCE));
     barrier();
