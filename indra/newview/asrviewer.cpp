@@ -319,9 +319,18 @@ void fillClouds(asr::SkyInput& sky, const LLSettingsSky& current)
     const LLVector2 world = ASWorldClouds::offsetAt(gAgentCamera.getCameraPositionGlobal());
     sky.cloudWorldOffset[0] = world.mV[0];
     sky.cloudWorldOffset[1] = world.mV[1];
-    const LLVector4 lightnorm = LLEnvironment::instance().getClampedLightNorm(); // cloudsV.glsl's
-    sky.cloudShadowOffset[0] = lightnorm.mV[0] * 0.0125f;
-    sky.cloudShadowOffset[1] = lightnorm.mV[2] * 0.0125f;
+    // cloudsV.glsl's self-shadow step, from lightnorm's x and z (the sky's y and x). OpenGL takes
+    // the sky's light, which jumps from the sun to the moon as the sun crosses 0 and jolted the
+    // clouds' shading (user: a gap between sun -0.01 and 0). The clouds take the sun's light down
+    // to -6 degrees (asrSkyClouds.glsl), so the step follows the sun there, then moves smoothly
+    // to the moon by -12.
+    const LLVector3 sun = current.getSunDirection();
+    const LLVector3 moon = current.getMoonDirection();
+    const F32 sunElevation = asinf(llclamp(sun.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG;
+    const F32 toMoon = llclamp((-6.f - sunElevation) / 6.f, 0.f, 1.f);
+    const LLVector3 light = lerp(sun, moon, toMoon * toMoon * (3.f - 2.f * toMoon));
+    sky.cloudShadowOffset[0] = light.mV[VY] * 0.0125f;
+    sky.cloudShadowOffset[1] = light.mV[VX] * 0.0125f;
 }
 
 void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)

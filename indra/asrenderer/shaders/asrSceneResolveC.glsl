@@ -334,7 +334,8 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
         }
     }
 
-    vec3 shown = luminance + sampleTransmittance(a, length(position), direction.z) * space;
+    const vec3 beyond = sampleTransmittance(a, length(position), direction.z) * space;
+    vec3 shown = luminance + beyond;
 
     // EEP's 2D clouds over all of it (asrSkyClouds.glsl).
     if (a.cloudScale > 0.0)
@@ -353,6 +354,16 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
             const CloudShape shape = cloudShape(a, hit, uvDx, uvDy, true);
             if (shape.cover > 0.0)
             {
+                // What lies beyond the air (the sun's and moon's discs, stars, the Milky Way)
+                // passes a cloud as direct light does, falling off far faster than its cover:
+                // (1 - cover)^8 in all with the blend below. A plain (1 - cover) let the HDR sun
+                // shine through any cover short of 1, as where the layer fades to the horizon
+                // (user: Starley at full coverage, the sun on the horizon in plain sight). The
+                // cloud's own density blocks it, before EEP's fade to the horizon: that fade
+                // blends far clouds into the sky, but a deck seen edge-on is at its thickest.
+                const float clear = 1.0 - min(shape.cover / hit.fade, 1.0);
+                const float clear2 = clear * clear;
+                shown = luminance + beyond * (clear2 * clear2 * clear2 * clear);
                 shown = cloudOver(a, direction, hit, shape, luminance, shown, ExposureRef(ViewRef(push.view).exposure).skyIrradiance);
             }
         }
