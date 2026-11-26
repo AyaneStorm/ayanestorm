@@ -1626,7 +1626,6 @@ private:
         }
         mVisibilityTarget = createTarget(MTLPixelFormatR32Uint, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "visibility buffer");
         mDepthTarget = createTarget(MTLPixelFormatDepth32Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "depth buffer");
-        mAlbedoTarget = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 4, "albedo target");
         mNormalTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "normal target");
         mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget, width, height, 8, "lit target");
         mSceneColorTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "scene colour target");
@@ -1645,7 +1644,7 @@ private:
         uint32_t levels = 0;
         const uint64_t pyramidBytes = uint64_t(pyramidLayout(width, height, offsets, levels)) * sizeof(float);
         mScenePyramid = createSceneBuffer(pyramidBytes, MemoryCategory::RenderTargets, "depth pyramid", true);
-        return mVisibilityTarget && mDepthTarget && mAlbedoTarget && mNormalTarget && mScenePyramid;
+        return mVisibilityTarget && mDepthTarget && mNormalTarget && mScenePyramid;
     }
 
     // Frames still running may read the old table, so it stays until they are done.
@@ -1932,7 +1931,6 @@ private:
         [resolve setBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [resolve setTexture:mVisibilityTarget atIndex:0];
-        [resolve setTexture:mAlbedoTarget atIndex:1];
         [resolve setTexture:mNormalTarget atIndex:2];
         [resolve setTexture:mLitTarget atIndex:8];
         bindSkyTables(resolve); // the background
@@ -3161,7 +3159,6 @@ private:
     id<MTLFence> mSceneFence = nil;
     id<MTLTexture> mVisibilityTarget = nil;
     id<MTLTexture> mDepthTarget = nil;
-    id<MTLTexture> mAlbedoTarget = nil;
     id<MTLTexture> mNormalTarget = nil;
     id<MTLTexture> mAuditTarget = nil;
     id<MTLTexture> mLitTarget = nil;        // the opaque image, set 1 binding 8

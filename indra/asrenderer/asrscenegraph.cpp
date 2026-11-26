@@ -40,7 +40,6 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("visibility", ResultScope::Frame);
     graph.addResult("depth", ResultScope::Frame);
     graph.addResult("depth pyramid", ResultScope::Persistent);
-    graph.addResult("albedo", ResultScope::Frame);
     graph.addResult("normals", ResultScope::Frame);
     graph.addResult("scene counts", ResultScope::Frame);
     graph.addResult("audit visibility", ResultScope::Frame);
@@ -134,7 +133,6 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultSkyViewLut, ComputeRead },
                                { ResultAerialLut, ComputeRead },
                                { ResultExposure, ComputeRead },
-                               { ResultAlbedo, ComputeWrite },
                                { ResultNormals, ComputeWrite },
                                { ResultLit, ComputeWrite },
                                { ResultTextureFeedback, ComputeWrite | Keep } });

@@ -47,7 +47,6 @@ enum SceneResult : ResultId
     ResultVisibility,
     ResultDepth,
     ResultDepthPyramid,
-    ResultAlbedo,
     ResultNormals,
     ResultSceneCounts,    // read back for statistics
     ResultAuditVisibility,

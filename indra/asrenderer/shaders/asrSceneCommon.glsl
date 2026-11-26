@@ -270,6 +270,11 @@ layout(buffer_reference, std430) buffer ExposureRef
     float illuminance;
     vec3 skyIrradiance; // the sky alone, rgb (offset 16, as GpuExposure)
     vec3 twilightBand;  // the twilight arch's source, rgb (offset 32, as GpuExposure)
+    vec3 sunLight;      // offset 48
+    vec3 sunDirection;  // offset 64, world
+    vec3 moonLight;     // offset 80
+    vec3 moonDirection; // offset 96, world
+    vec4 ambient[9];    // offset 112
 };
 
 // Texture and vertex colours are sRGB; light works on linear values.
@@ -401,20 +406,41 @@ vec3 octahedralDecode(float x, float y)
     return normalize(n);
 }
 
-// A vertex's normal, from the first word of its attributes.
-// Until lighting in P4: a soft light from the normal so shapes read. Opaque surfaces and
-// Mac OIT's blended ones both take it, so a blended layer is not brighter than what it covers.
-float placeholderLight(vec3 normal)
+// The order-2 spherical harmonics basis, in the order the exposure pass stores them.
+void shBasis(vec3 n, out float y[9])
 {
-    return 0.65 + 0.35 * dot(normal, normalize(vec3(0.4, 0.3, 0.87)));
+    y[0] = 0.282095;
+    y[1] = 0.488603 * n.y;
+    y[2] = 0.488603 * n.z;
+    y[3] = 0.488603 * n.x;
+    y[4] = 1.092548 * n.x * n.y;
+    y[5] = 1.092548 * n.y * n.z;
+    y[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
+    y[7] = 1.092548 * n.x * n.z;
+    y[8] = 0.546274 * (n.x * n.x - n.y * n.y);
 }
 
-// The stand-in shading in linear light: a white surface facing up gets the frame's measured
-// illuminance, so after exposure it reads as it did before scene colour was linear.
-vec3 placeholderShade(vec3 srgbColor, vec3 normal)
+// The light on a surface of this normal, in the sun's units: the sun and moon after the air,
+// and the sky and ground around (irradiance from the exposure pass's harmonics, Ramamoorthi
+// and Hanrahan 2001). Opaque surfaces and every Mac OIT layer take this one function, so a
+// blended layer is lit as what it covers.
+vec3 surfaceIrradiance(vec3 normal)
 {
-    const float illuminance = ExposureRef(ViewRef(push.view).exposure).illuminance;
-    return srgbToLinear(srgbColor) * placeholderLight(normal) * (illuminance / 3.14159265);
+    ExposureRef e = ExposureRef(ViewRef(push.view).exposure);
+    float y[9];
+    shBasis(normal, y);
+    vec3 ambient = vec3(0.0);
+    for (int i = 0; i < 9; ++i)
+    {
+        ambient += e.ambient[i].rgb * y[i];
+    }
+    return max(ambient, vec3(0.0)) + e.sunLight * max(dot(normal, e.sunDirection), 0.0) + e.moonLight * max(dot(normal, e.moonDirection), 0.0);
+}
+
+// A diffuse surface lit: its sRGB colour as albedo, so it reflects albedo / pi of its light.
+vec3 lightSurface(vec3 srgbColor, vec3 normal)
+{
+    return srgbToLinear(srgbColor) * surfaceIrradiance(normal) * (1.0 / 3.14159265);
 }
 
 // A palette entry holds the bind shape, which can scale unevenly, so a normal follows its

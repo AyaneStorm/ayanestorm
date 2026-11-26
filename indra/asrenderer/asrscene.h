@@ -731,7 +731,18 @@ struct GpuExposure
     float pad2;
     float twilightBand[3];  // the sky low under the sun once it has set, rgb: the twilight arch's source
     float pad3;
+    // Surface lighting, made once per frame from the sky (see lightSurface() in asrSceneCommon.glsl).
+    float sunLight[3];  // the sun's illuminance on a surface facing it, after the air, rgb
+    float pad4;
+    float sunDirection[3]; // world, as the atmosphere's
+    float pad5;
+    float moonLight[3]; // the same for the moon
+    float pad6;
+    float moonDirection[3];
+    float pad7;
+    float ambient[9][4]; // irradiance from the sky and the ground below as order-2 spherical harmonics, rgb, already convolved
 };
+static_assert(sizeof(GpuExposure) == 256, "shaders read this layout");
 // Where outlines meet, the mask keeps the higher one, so the order is OpenGL's precedence.
 constexpr uint32_t SELECTION_COLOR_FACE = 0;            // the face tool's tint, not an outline
 constexpr uint32_t SELECTION_COLOR_HIGHLIGHT_CHILD = 1; // HighlightChildColor: a child the pointer would pick

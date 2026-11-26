@@ -180,11 +180,11 @@ void main()
     vec2 uvDx;
     vec2 uvDy;
     vec4 color = surfaceColor(uvDx, uvDy);
-    // The same placeholder light as opaque surfaces. A face seen from behind (two-sided)
-    // turns its normal to the camera, as the resolve does.
+    // Lit as opaque surfaces are. A face seen from behind (two-sided) turns its normal to the
+    // camera, as the resolve does.
     vec3 normal = normalize(vary_normal);
     normal = dot(normal, vary_toCamera) < 0.0 ? -normal : normal;
-    color.rgb = placeholderShade(color.rgb, normal);
+    color.rgb = lightSurface(color.rgb, normal);
     if (ViewRef(push.view).debugView == DEBUG_VIEW_ALPHA_MODE)
     {
         color.rgb = vec3(0.9, 0.1, 0.1); // blended, at its own alpha

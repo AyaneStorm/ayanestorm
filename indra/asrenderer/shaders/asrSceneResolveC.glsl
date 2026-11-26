@@ -15,10 +15,9 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0) uniform texture2D textures[65536];
 layout(set = 0, binding = 1) uniform sampler samplers[4];
 layout(set = 1, binding = 0, r32ui) uniform readonly uimage2D visibility;
-layout(set = 1, binding = 1, rgba8) uniform writeonly image2D albedo;
 layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D normals;
-// The opaque image Mac OIT composites over. Until lighting in P4: albedo with a soft light
-// from the normal so shapes read, and the sky where nothing is drawn. Alpha is glow.
+// The opaque image Mac OIT composites over: lit surfaces, and the sky where nothing is drawn.
+// Alpha is glow.
 layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
 #include "asrAtmosphere.glsl"
 #include "asrSkyClouds.glsl"
@@ -371,9 +370,9 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     return shown; // kept inside half floats once exposed, where the lit image is written
 }
 
-vec4 unlit(vec3 albedo, vec3 normal)
+vec4 shadeSurface(vec3 albedo, vec3 normal)
 {
-    return vec4(placeholderShade(albedo, normal), 0.0);
+    return vec4(lightSurface(albedo, normal), 0.0);
 }
 
 struct Interpolator
@@ -434,7 +433,6 @@ void reject(ivec2 pixel, uint bit, uint value)
     atomicOr(guard.bits, bit);
     atomicAdd(guard.pixels, 1u);
     atomicMax(guard.value, value);
-    imageStore(albedo, pixel, vec4(1.0, 0.0, 1.0, 1.0));
     imageStore(normals, pixel, vec4(0.0, 0.0, 1.0, 1.0));
     imageStore(lit, pixel, vec4(1.0, 0.0, 1.0, 0.0));
 }
@@ -544,7 +542,6 @@ void main()
     const uint id = imageLoad(visibility, pixel).r;
     if (id == 0xFFFFFFFFu)
     {
-        imageStore(albedo, pixel, vec4(0.0, 0.0, 0.0, 0.0));
         imageStore(normals, pixel, vec4(0.0));
         const vec2 ndc = (vec2(pixel) + 0.5) * (2.0 / view.pixelSize.xy) - 1.0;
         const float pixelAngle = 2.0 / (view.pixelSize.x * view.projection.x);
@@ -676,9 +673,8 @@ void main()
         }
     }
 
-    imageStore(albedo, pixel, vec4(color.rgb, 1.0));
     imageStore(normals, pixel, vec4(worldNormal, 1.0));
-    vec4 shown = unlit(color.rgb, worldNormal);
+    vec4 shown = shadeSurface(color.rgb, worldNormal);
     shown.rgb = applyAerial(loadAtmosphere(view.atmosphere), shown.rgb, (vec2(pixel) + 0.5) * view.pixelSize.zw,
                             distance(world * bary.weights, view.camera.xyz));
     if (view.debugView == DEBUG_VIEW_NORMALS)

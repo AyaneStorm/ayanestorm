@@ -46,6 +46,14 @@ Studies this plan follows:
   - Scene colour is linear: texture and vertex colours are decoded from sRGB where they are shaded; the composite exposes, tone maps and encodes sRGB.
 - **Direct light:** sun and moon from the transmittance LUT, with EEP sunlight colour.
 - **Ambient light:** from `sky ambient SH`.
+- **Batch 1, lighting core: written 26 November 2026, tested in `asrenderer_test` on Vulkan (0 validation errors); Metal and viewer unbuilt.**
+  - The exposure pass, which already samples the sky, also leaves the sun's and moon's light after the air at the camera, their directions, and the ambient as order-2 spherical harmonics, already convolved to irradiance (Ramamoorthi and Hanrahan 2001): made once per frame in `GpuExposure` (now 256 bytes).
+  - The ground below reflects `BOUNCE_ALBEDO` 0.2 of all the light falling on it into the harmonics (constant and z terms only). The atmosphere's own ground albedo is 0, as EEP skies are fitted without it, so it cannot serve.
+  - `lightSurface()` in `asrSceneCommon.glsl` replaces the placeholder in the resolve and in every Mac OIT layer: diffuse only, until materials bring specular.
+  - The albedo target is gone: nothing read it (4 bytes a pixel). Binding 1 of set 1 stays free, so no other binding moved.
+  - Measured (starley, city view, ground mean 0-255): sun +60: 84, +30: 92, +5: 94, 0: 91 warm, -4: 50 pink-violet, -10: 20, -25 without moon: 2. A white surface facing up reflects exactly the sky's mean brightness, so physical lighting alone cannot make a moonless ground brighter than its sky.
+  - **Moonless night ground (open from step 1, 26 November 2026):** with the sun at -25 degrees and no moon, the ground reads 2/255 at `ASRendererExposureAdaptation` 0.7. Raising adaptation lifts the sky with it (0.8: sky 21, ground 11), which turns the night sky grey: rejected by the user. Adaptation stays 0.7; the ground must get its night light from sky and moon ambient here, not from exposure.
+  - **Dull sky from sun +9 degrees (open from step 1, revisit after this step):** looking at the sun, the sky's mean stays about (72, 92, 131) from +9 up, greyish rather than dark, while the unlit ground sits near 30/255. Judge again once the ground is lit; no sky-mean guard before that.
 - **Materials:**
   - LL's legacy materials: diffuse, normal and specular maps, glossiness, environment intensity, shiny, fullbright, emissive mask.
   - PBR (glTF): base colour, normal, ORM, emissive, alpha modes, double-sided, texture transforms.

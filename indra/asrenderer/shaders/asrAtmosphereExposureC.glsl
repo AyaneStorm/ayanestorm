@@ -23,7 +23,12 @@ const uint SAMPLES_PER_THREAD = 16u; // 1024 directions in all, on a 32 by 32 gr
 const float SKY_KEY = 0.5;
 
 const vec3 LUMINANCE = vec3(0.2126, 0.7152, 0.0722); // Rec. 709
+// What the ground below reflects into surfaces' ambient light, as a typical mix of grass, soil
+// and paving. The atmosphere's own ground albedo is 0 (EEP skies are fitted without it), so it
+// cannot serve here; without any, a face turned down gets no ambient at all.
+const float BOUNCE_ALBEDO = 0.2;
 shared vec4 sharedSums[64]; // rgb: cosine-weighted, a: uniform over the hemisphere's luminance
+shared vec3 sharedHarmonics[64][9]; // the sky's radiance projected on the harmonics, uniform samples
 
 void main()
 {
@@ -37,6 +42,11 @@ void main()
     // irradiance is then pi times the mean radiance) and a uniform one (the sky's mean).
     vec3 cosineSum = vec3(0.0);
     vec3 uniformSum = vec3(0.0);
+    vec3 harmonics[9];
+    for (int k = 0; k < 9; ++k)
+    {
+        harmonics[k] = vec3(0.0);
+    }
     for (uint i = 0u; i < SAMPLES_PER_THREAD; ++i)
     {
         const uint cell = thread * SAMPLES_PER_THREAD + i;
@@ -48,15 +58,30 @@ void main()
         const float z = u.x;
         const float side = sqrt(max(1.0 - z * z, 0.0));
         const vec3 uniform_ = vec3(side * cos(phi), side * sin(phi), z);
-        uniformSum += twilightSky(a, band, uniform_);
+        const vec3 radiance = twilightSky(a, band, uniform_);
+        uniformSum += radiance;
+        float y[9];
+        shBasis(uniform_, y);
+        for (int k = 0; k < 9; ++k)
+        {
+            harmonics[k] += radiance * y[k];
+        }
     }
     sharedSums[thread] = vec4(cosineSum, dot(uniformSum, LUMINANCE));
+    for (int k = 0; k < 9; ++k)
+    {
+        sharedHarmonics[thread][k] = harmonics[k];
+    }
     barrier();
     for (uint half_ = 32u; half_ > 0u; half_ >>= 1u)
     {
         if (thread < half_)
         {
             sharedSums[thread] += sharedSums[thread + half_];
+            for (int k = 0; k < 9; ++k)
+            {
+                sharedHarmonics[thread][k] += sharedHarmonics[thread + half_][k];
+            }
         }
         barrier();
     }
@@ -103,4 +128,32 @@ void main()
     result.illuminance = illuminance;
     result.twilightBand = band;
     result.skyIrradiance = skyIrradiance;
+
+    // Surface lighting. Sun and moon: their illuminance on a face turned to them, through the
+    // air at the camera, setting over their discs as the meter has them.
+    const vec3 sunLight = a.sunIlluminance * transmittance;
+    const vec3 moonLight = a.moonSkyLight * moonThroughAir;
+    result.sunLight = sunLight;
+    result.sunDirection = a.sunDirection;
+    result.moonLight = moonLight;
+    result.moonDirection = a.moonDirection;
+    // Ambient: the upper hemisphere's uniform samples (pdf 1 / 2 pi) give the sky's harmonics.
+    // The ground below is a uniform radiance, BOUNCE_ALBEDO of all the light falling on it;
+    // over the lower hemisphere it only reaches the constant and z terms (the rest integrate
+    // to 0). Then the cosine convolution turns radiance into irradiance.
+    vec3 coefficients[9];
+    for (int k = 0; k < 9; ++k)
+    {
+        coefficients[k] = sharedHarmonics[0][k] * (2.0 * ATMOSPHERE_PI / float(64u * SAMPLES_PER_THREAD));
+    }
+    const vec3 groundIrradiance = skyIrradiance + sunLight * max(a.sunDirection.z, 0.0) + moonLight * max(a.moonDirection.z, 0.0);
+    const vec3 ground = groundIrradiance * (BOUNCE_ALBEDO / ATMOSPHERE_PI);
+    coefficients[0] += ground * (0.282095 * 2.0 * ATMOSPHERE_PI);
+    coefficients[2] -= ground * (0.488603 * ATMOSPHERE_PI);
+    const float bands[9] = float[9](ATMOSPHERE_PI, 2.0 * ATMOSPHERE_PI / 3.0, 2.0 * ATMOSPHERE_PI / 3.0, 2.0 * ATMOSPHERE_PI / 3.0,
+                                    ATMOSPHERE_PI / 4.0, ATMOSPHERE_PI / 4.0, ATMOSPHERE_PI / 4.0, ATMOSPHERE_PI / 4.0, ATMOSPHERE_PI / 4.0);
+    for (int k = 0; k < 9; ++k)
+    {
+        result.ambient[k] = vec4(coefficients[k] * bands[k], 0.0);
+    }
 }

@@ -73,11 +73,11 @@ constexpr VkPipelineStageFlags2 TEXTURE_READ_STAGES = VK_PIPELINE_STAGE_2_FRAGME
 
 constexpr VkFormat VISIBILITY_FORMAT = VK_FORMAT_R32_UINT;
 constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
-constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour, pre-exposed; alpha is glow
 constexpr VkFormat SKY_TABLE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT; // see createSky
 constexpr uint32_t SCENE_IMAGE_BINDINGS = 20; // set 1, see createScene()
+constexpr uint32_t SCENE_BINDING_FREE = 1;     // a number no shader declares
 constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
 constexpr uint32_t SCENE_SAMPLED_BINDINGS = 5; // the depth and the sky's four tables
 
@@ -1414,7 +1414,7 @@ private:
 
     bool createScene(std::string& error)
     {
-        // Visibility, albedo and normals, then depth, which the pyramid reads, then Mac OIT's
+        // Visibility, a free number (1: was albedo, which nothing read) and normals, then depth, which the pyramid reads, then Mac OIT's
         // moments, tail depth, colour and weights, the lit image and the scene colour, the
         // selection mask, then the sky's tables written (11 to 14) and read (15 to 18), then
         // bloom's atlas (19).
@@ -1423,14 +1423,14 @@ private:
         {
             bindings[i].binding = i;
             bindings[i].descriptorType = sceneBindingSampled(i) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            bindings[i].descriptorCount = 1;
+            bindings[i].descriptorCount = i == SCENE_BINDING_FREE ? 0 : 1; // 0 reserves the number, nothing to bind
             bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
         layout.bindingCount = SCENE_IMAGE_BINDINGS;
         layout.pBindings = bindings;
 
-        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - SCENE_SAMPLED_BINDINGS },
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - SCENE_SAMPLED_BINDINGS - 1 },
                                                 { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, SCENE_SAMPLED_BINDINGS } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.maxSets = 1;
@@ -1483,7 +1483,6 @@ private:
         setPassBodies();
         mResultImages[ResultVisibility] = &mVisibilityImage;
         mResultImages[ResultDepth] = &mDepthImage;
-        mResultImages[ResultAlbedo] = &mAlbedoImage;
         mResultImages[ResultNormals] = &mNormalImage;
         mResultImages[ResultLit] = &mLitImage;
         mResultImages[ResultSceneColor] = &mSceneColorImage;
@@ -1600,7 +1599,6 @@ private:
         }
         destroyTarget(mVisibilityImage);
         destroyTarget(mDepthImage);
-        destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
@@ -1618,7 +1616,6 @@ private:
 
         if (!createTarget(mVisibilityImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "visibility buffer") ||
             !createTarget(mDepthImage, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "depth buffer") ||
-            !createTarget(mAlbedoImage, ALBEDO_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "albedo target") ||
             !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target") ||
             !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
@@ -1638,7 +1635,7 @@ private:
             return false;
         }
 
-        const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  mAlbedoImage.view,   mNormalImage.view,     mDepthImage.view,
+        const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  VK_NULL_HANDLE,      mNormalImage.view,     mDepthImage.view,
                                                           mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
                                                           mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
@@ -1646,18 +1643,24 @@ private:
                                                           mBloomImage.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
+        uint32_t count = 0;
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
-            images[i].imageView = views[i];
-            images[i].imageLayout = i == 3 ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = mSceneSet;
-            writes[i].dstBinding = i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = sceneBindingSampled(i) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[i].pImageInfo = &images[i];
+            if (i == SCENE_BINDING_FREE)
+            {
+                continue;
+            }
+            images[count].imageView = views[i];
+            images[count].imageLayout = i == 3 ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+            writes[count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[count].dstSet = mSceneSet;
+            writes[count].dstBinding = i;
+            writes[count].descriptorCount = 1;
+            writes[count].descriptorType = sceneBindingSampled(i) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[count].pImageInfo = &images[count];
+            ++count;
         }
-        vkUpdateDescriptorSets(mDevice, SCENE_IMAGE_BINDINGS, writes, 0, nullptr);
+        vkUpdateDescriptorSets(mDevice, count, writes, 0, nullptr);
         return true;
     }
 
@@ -2540,7 +2543,6 @@ private:
         }
         destroyTarget(mVisibilityImage);
         destroyTarget(mDepthImage);
-        destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
@@ -4819,7 +4821,6 @@ private:
     VkPipeline mBloomPipeline = VK_NULL_HANDLE;
     TargetImage mVisibilityImage;
     TargetImage mDepthImage;
-    TargetImage mAlbedoImage;
     TargetImage mNormalImage;
     TargetImage mAuditImage;
     TargetImage mLitImage;
