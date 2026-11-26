@@ -71,6 +71,7 @@ constexpr uint32_t INSTANCE_SKINNED = 8u;      // set by the store: its position
 constexpr uint32_t INSTANCE_BOUND = 16u;       // set by the store: on a skeleton, and GpuInstance::binding names how
 constexpr uint32_t INSTANCE_BLENDED = 32u;     // alpha blended: drawn by the transparency passes, never into depth
 constexpr uint32_t INSTANCE_HUD = 64u;         // a HUD object, in HUD space: only the HUD pass draws it
+constexpr uint32_t INSTANCE_MOVING = 1u << 18; // set by the store: its transform changed lately, so its shadow is not cached
 constexpr uint32_t INSTANCE_FACE_SELECTED = 1u << 19;  // a face the face tool selected: tinted
 // Outlined, in a colour of GpuSceneView::selectionColors (SELECTION_COLOR_*, 0: not outlined).
 constexpr uint32_t INSTANCE_OUTLINE_SHIFT = 20;
@@ -167,7 +168,45 @@ constexpr uint32_t CULL_AUDIT = 2; // everything in view, with no occlusion test
 constexpr uint32_t CULL_GROUPS_EARLY = 3;
 constexpr uint32_t CULL_GROUPS_LATE = 4;
 constexpr uint32_t CULL_GROUPS_AUDIT = 5;
+constexpr uint32_t CULL_GROUPS_SHADOW = 7; // the shadow views' groups; 6 is MACOIT_GATE
 constexpr uint32_t CULL_GROUPS_PER_WORKGROUP = CULL_GROUP_SIZE / CLUSTER_GROUP_SIZE;
+
+// Sun and moon shadows (doc/ayanestorm-new-renderer-shadows.md). The shadow views are one
+// array, filled on the GPU by the shadow fit pass: the cascades now, local light maps later.
+// The early cull tests every instance against the main view and then each shadow view, so an
+// instance is loaded, sized and given its LOD once for all of them. A shadow list entry's
+// instance carries its view above SHADOW_VIEW_SHIFT, and one draw sends each cluster to its
+// view's layer.
+constexpr uint32_t SHADOW_CASCADES = 4;
+constexpr uint32_t MAX_SHADOW_VIEWS = 32;
+constexpr uint32_t SHADOW_VIEW_SHIFT = 26; // instances stay below 1 << 26
+// The static cache (doc/ayanestorm-new-renderer-shadows.md, The design, item 2).
+constexpr uint32_t SHADOW_TILES = 32;          // dirty tiles across a map, a bit each in a row word
+constexpr uint32_t SHADOW_SETTLE_FRAMES = 30;  // frames a moved instance stays moving content
+constexpr uint32_t SHADOW_MAX_DIRTY = 4096;    // world spheres a frame can report; past it, everything is redrawn
+constexpr float SHADOW_LIGHT_STEP = 0.25f;     // ASRendererShadowSunStep's default, degrees: 0 follows the light every frame
+constexpr uint32_t SHADOW_DRAW_STATIC = 0;     // ScenePush::phase of the shadow draws
+constexpr uint32_t SHADOW_DRAW_MOVING = 1;
+constexpr uint32_t SHADOW_INSTANCE_MASK = (1u << SHADOW_VIEW_SHIFT) - 1;
+// Texels across a cascade: the tier's size times RenderShadowResolutionScale. OpenGL sizes
+// its cascades to the screen times that scale; ours are square, from the VRAM tier.
+constexpr uint32_t SHADOW_MAP_SIZE = 2048;              // default tier: 4 x 2048^2 x 2 bytes = 32 MB
+constexpr uint32_t SHADOW_MAP_SIZE_LOW = 1024;          // budgets under SHADOW_LOW_TIER_BUDGET: 8 MB
+constexpr uint64_t SHADOW_LOW_TIER_BUDGET = 6ull << 30; // 4 GB cards and the GT 1030
+constexpr uint32_t SHADOW_MAP_MIN = 512;
+constexpr uint32_t SHADOW_MAP_MAX = 4096;
+inline uint32_t shadowMapSize(uint64_t budget, float resolutionScale)
+{
+    const float base = float(budget < SHADOW_LOW_TIER_BUDGET ? SHADOW_MAP_SIZE_LOW : SHADOW_MAP_SIZE);
+    const float size = base * (resolutionScale > 0.f ? resolutionScale : 1.f);
+    // A whole number of 64 texel steps, so every dirty tile (SHADOW_TILES across) is whole texels.
+    return size <= float(SHADOW_MAP_MIN) ? SHADOW_MAP_MIN : size >= float(SHADOW_MAP_MAX) ? SHADOW_MAP_MAX : (uint32_t(size + 32.f) / 64u) * 64u;
+}
+constexpr float SHADOW_DISTANCE = 512.f;    // metres the cascades reach at most, as OpenGL's
+constexpr uint32_t SHADOW_GROUP_ENTRY_BYTES = 12; // instance, group, and a bit per shadow view it passed
+constexpr uint32_t SHADOW_LIGHT_NONE = 0;   // GpuShadowViews::light
+constexpr uint32_t SHADOW_LIGHT_SUN = 1;
+constexpr uint32_t SHADOW_LIGHT_MOON = 2;
 
 // What a volume face provides.
 struct SceneVertex
@@ -521,8 +560,42 @@ struct GpuSceneCounts
     uint32_t skinAuditMaxError; // positive float bits: metres from direct float skinning
     GpuDrawArguments macoitTail[2 * SCENE_BLENDED_LISTS];
     GpuDrawArguments selection; // the early cull's selected clusters, for the selection mask
+    GpuDrawArguments shadow[SCENE_LISTS]; // static casters into dirty tiles, from each shadow list's start
+    GpuWorkCount shadowGroups; // groups whose clusters are tested for a shadow view
+    GpuDrawArguments shadowMoving[SCENE_LISTS]; // moving casters, from each shadow list's end backwards
+    uint32_t shadowUsed[SCENE_LISTS]; // both together, checked against the list's room
 };
-static_assert(sizeof(GpuSceneCounts) == 1120, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 2000, "shaders read this layout");
+
+// One shadow view, written by the shadow fit pass. Positions are relative to the camera, as
+// scenePosition() places vertices, so a far region keeps its precision.
+struct GpuShadowView
+{
+    float viewProjection[16]; // camera-relative world to the map's clip space; depth 1 towards the light
+    float planes[6][4];       // camera-relative; none on the light's side, which depth clamp keeps
+    float lightDirection[4];  // towards the light; w: metres per texel
+    float depthRange;         // metres from depth 0 to depth 1
+    uint32_t layer;
+    int32_t origin[2];        // the window's centre, in texels of the world-anchored grid across the light
+    int32_t previousOrigin[2]; // last frame's: the shift pass moves the cache by the difference
+    float depthOrigin;        // metres along the light the depth is measured from, stepped
+    float lodScale;           // the camera's LOD scale the cache was drawn with
+    uint32_t valid;           // 0: nothing cached yet
+    float pad[3];
+};
+static_assert(sizeof(GpuShadowView) == 224, "shaders read this layout");
+
+struct GpuShadowViews
+{
+    float splits[4];   // each cascade's far distance from the camera, metres
+    uint32_t count;    // views filled this frame, 0 with no light to cast
+    uint32_t light;    // SHADOW_LIGHT_*
+    float pad[2];
+    float cachedLight[4]; // the light direction the cache was drawn for, stepped (ASRendererShadowSunStep)
+    GpuShadowView views[MAX_SHADOW_VIEWS];
+    uint32_t dirty[MAX_SHADOW_VIEWS][SHADOW_TILES]; // a word per tile row, a bit per tile: redraw this frame
+};
+static_assert(sizeof(GpuShadowViews) == 48 + MAX_SHADOW_VIEWS * 224 + MAX_SHADOW_VIEWS * SHADOW_TILES * 4, "shaders read this layout");
 static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolve.glsl's GUARD_OFFSET");
 static_assert(offsetof(GpuSceneCounts, macoitTailSeen) == 832, "asrSceneMacOIT.glsl's MACOIT_TAIL_SEEN_OFFSET");
 static_assert(offsetof(GpuSceneCounts, skinAuditSamples) == 836, "asrSceneSkinAudit.glsl's counter offset");
@@ -684,6 +757,7 @@ constexpr uint32_t DEBUG_VIEW_ALPHA_MODE = 3; // grey opaque, green cut-out, red
 constexpr uint32_t DEBUG_VIEW_CLUSTERS = 4;   // one colour per drawn cluster
 constexpr uint32_t DEBUG_VIEW_NO_OCCLUSION = 5; // shaded, with occlusion culling off
 // 6 and 7 are shader-only: see asrSceneCommon.glsl.
+constexpr uint32_t DEBUG_VIEW_SHADOW_CASCADES = 8; // each pixel's cascade as a colour, dark where shadowed; grey past them
 
 // A look-at camera with reversed depth and no far plane. World space is the viewer's:
 // right-handed, Z up. Y comes out flipped, as Vulkan wants it, and asr_spirv2msl turns
@@ -742,6 +816,18 @@ struct GpuSceneView
     float glowStrength;       // RenderGlowStrength, 0 with RenderGlow off: SL glow's light into bloom
     float exposureAdaptation; // ASRendererExposureAdaptation: 1 adapts fully to the light, less adapts partly
     uint64_t resolveTiles;    // GpuResolveTiles: the resolve's tiles by material kind
+    uint32_t shadowListBase[SCENE_LISTS]; // where each shadow list starts in the shadow list buffer
+    uint32_t shadowListEnd;   // the shadow lists' room; the shadow group entries follow
+    uint32_t shadowGroupEnd;  // room for shadow group entries
+    uint32_t shadowCascades;  // cascades fitted and drawn, 0 with shadows off
+    float shadowDistance;     // metres the cascades reach at most
+    uint64_t shadowViews;     // GpuShadowViews
+    uint64_t shadowLists;     // shadow clusters, then shadow group entries
+    float shadowResolution;   // texels across a cascade
+    uint32_t shadowDirtyCount; // spheres at shadowDirty
+    uint64_t shadowDirty;     // world spheres (x, y, z, radius) whose cached shadow is stale; a negative radius: all
+    float shadowLightStep;    // cosine of ASRendererShadowSunStep: the cache's light moves when the light leaves it
+    float shadowPad[3];
 };
 
 // The resolve runs once per material kind, each over only the tiles holding that kind
@@ -758,7 +844,9 @@ inline uint64_t resolveTilesBytes(uint32_t width, uint32_t height)
 {
     return RESOLVE_TILES_HEADER + uint64_t(RESOLVE_KINDS) * resolveTileCapacity(width, height) * 4;
 }
-static_assert(sizeof(GpuSceneView) == 896, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 1056, "shaders read this layout");
+static_assert(offsetof(GpuSceneView, shadowDirty) % 8 == 0, "std430 aligns a uint64_t to 8");
+static_assert(offsetof(GpuSceneView, shadowViews) % 8 == 0, "std430 aligns a uint64_t to 8");
 // The atmosphere follows the view in its buffer, and its shader struct holds vec4s.
 static_assert(sizeof(GpuSceneView) % 16 == 0, "the atmosphere after the view must stay 16-byte aligned");
 
@@ -801,6 +889,9 @@ constexpr uint32_t SELECTION_COLOR_FOCUS = 7;           // the media focus colou
 constexpr uint32_t SELECTION_COLOR_REMOVE = 8;          // red: Ctrl takes highlighted objects out of the selection
 constexpr uint32_t SELECTION_COLORS = 9;
 static_assert(offsetof(GpuSceneView, selection) % 8 == 0, "std430 aligns a uint64_t to 8");
+
+// The view's shadow part, after SceneStore::fillView(): `cascades` 0 turns shadows off.
+void fillShadowView(GpuSceneView& view, uint32_t cascades, uint32_t mapSize, uint64_t shadowViews, uint64_t shadowLists);
 
 // The time skeletons and views are stamped with.
 uint32_t sceneTime(std::chrono::steady_clock::time_point time);

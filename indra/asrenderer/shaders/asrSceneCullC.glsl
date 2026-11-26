@@ -31,6 +31,7 @@ const uint CULL_AUDIT = 2u;
 const uint CULL_GROUPS_EARLY = 3u;
 const uint CULL_GROUPS_LATE = 4u;
 const uint CULL_GROUPS_AUDIT = 5u;
+const uint CULL_GROUPS_SHADOW = 7u;
 
 const uint WHOLE_INSTANCE = 0xFFFFFFFFu;
 const uint RETEST_GROUP = 0x80000000u;
@@ -64,6 +65,10 @@ layout(buffer_reference, std430) buffer CountsRef
     uint countsUnused[3];
     DrawArguments macoitTail[2u * BLENDED_LISTS];
     DrawArguments selection; // see addSelected()
+    DrawArguments shadow[LISTS]; // see drawShadow()
+    WorkCount shadowGroups;
+    DrawArguments shadowMoving[LISTS];
+    uint shadowUsed[LISTS];
 };
 
 const uint MACOIT_GATE = 6u;
@@ -290,8 +295,9 @@ void addGroup(ViewRef view, uint instanceIndex, uint groupId)
     ListWriteRef(push.groups).items[base + slot] = ListEntry(instanceIndex, groupId);
 }
 
-// From the finest LOD to the one wanted. An LOD still on its way is passed over.
-uint chooseGeometry(ViewRef view, Instance instance, float scaleBound)
+// From the finest LOD to the one wanted at this distance from the camera. An LOD still on its
+// way is passed over.
+uint geometryAtDistance(ViewRef view, Instance instance, float scaleBound, float distanceToCamera)
 {
     GeometriesRef geometries = GeometriesRef(push.geometries);
     uint id = instance.geometry;
@@ -301,10 +307,8 @@ uint chooseGeometry(ViewRef view, Instance instance, float scaleBound)
         return id;
     }
 
-    const bool own = instance.lod.w <= 0.0;
-    const vec3 center = own ? vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) : instance.lod.xyz;
-    const float size = own ? geometry.radius * scaleBound : instance.lod.w;
-    const float ratio = distance(center, view.camera.xyz) * view.projection.w / size;
+    const float size = instance.lod.w <= 0.0 ? geometry.radius * scaleBound : instance.lod.w;
+    const float ratio = distanceToCamera * view.projection.w / size;
     for (uint lod = 1u; lod < MAX_LODS && geometry.coarser != 0u; ++lod)
     {
         if (geometry.clusterCount != 0u && ratio <= geometry.coarserAt)
@@ -320,6 +324,12 @@ uint chooseGeometry(ViewRef view, Instance instance, float scaleBound)
         geometry = coarser;
     }
     return id;
+}
+
+uint chooseGeometry(ViewRef view, Instance instance, float scaleBound)
+{
+    const vec3 center = instance.lod.w <= 0.0 ? vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) : instance.lod.xyz;
+    return geometryAtDistance(view, instance, scaleBound, distance(center, view.camera.xyz));
 }
 
 void testCluster(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, vec3 camera, float scaleBound)
@@ -387,6 +397,230 @@ bool chosenByView(ViewRef view, Instance instance)
     return (WordsRef(view.drawOnly).words[skeleton >> 5] & (1u << (skeleton & 31u))) != 0u;
 }
 
+// Shadow views (see asrscene.h): tested by the early cull, right after the instance has its
+// LOD, so nothing about an instance is worked out twice. Every bound is transformed once and
+// tested against each view still in its mask. No facing test and no occlusion: OpenGL draws
+// its shadow maps with culling off, so a one-sided face casts from both sides.
+struct ShadowGroupEntry
+{
+    uint instance;
+    uint group;
+    uint views; // a bit per shadow view the group's sphere is inside
+};
+layout(buffer_reference, std430) buffer ShadowGroupsRef { ShadowGroupEntry items[]; };
+
+ShadowGroupsRef shadowGroups(ViewRef view)
+{
+    return ShadowGroupsRef(view.shadowLists + uint64_t(view.shadowListEnd) * 8ul);
+}
+
+// The views of `candidates` whose box holds the sphere, `relative` to the camera.
+uint shadowViewsOf(ViewRef view, vec3 relative, float radius, uint candidates)
+{
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    uint passed = 0u;
+    for (uint bits = candidates; bits != 0u; bits &= bits - 1u)
+    {
+        const uint v = uint(findLSB(bits));
+        bool inside = true;
+        for (int i = 0; i < 6 && inside; ++i)
+        {
+            inside = dot(shadows.views[v].planes[i], vec4(relative, 1.0)) >= -radius;
+        }
+        passed |= inside ? 1u << v : 0u;
+    }
+    return passed;
+}
+
+// Moving casters are drawn every frame; static ones only into their views' dirty tiles.
+bool movingCaster(Instance instance)
+{
+    return (instance.flags & (INSTANCE_MOVING | INSTANCE_BOUND)) != 0u;
+}
+
+// The views of `candidates` where the sphere touches a dirty tile.
+uint dirtyViewsOf(ViewRef view, vec3 relative, float radius, uint candidates)
+{
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    const float size = view.shadowResolution;
+    const float tile = size / float(SHADOW_TILES);
+    uint passed = 0u;
+    for (uint bits = candidates; bits != 0u; bits &= bits - 1u)
+    {
+        const uint v = uint(findLSB(bits));
+        const vec2 at = ((shadows.views[v].viewProjection * vec4(relative, 1.0)).xy * 0.5 + 0.5) * size;
+        const float reach = radius / shadows.views[v].lightDirection.w;
+        const uint columns = shadowTileBits(at.x - reach, at.x + reach, tile);
+        const int first = max(int(floor((at.y - reach) / tile)), 0);
+        const int last = min(int(ceil((at.y + reach) / tile)) - 1, int(SHADOW_TILES) - 1);
+        for (int row = first; row <= last && columns != 0u; ++row)
+        {
+            if ((shadows.dirty[v * SHADOW_TILES + uint(row)] & columns) != 0u)
+            {
+                passed |= 1u << v;
+                break;
+            }
+        }
+    }
+    return passed;
+}
+
+// One entry per view in `views`, all taken with one atomic. Static entries fill a shadow list
+// from its start, moving ones from its end backwards; shadowUsed keeps both within its room.
+void drawShadow(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, uint triangles, uint views)
+{
+    const uint list = listOf(instance.flags, triangles);
+    const uint base = view.shadowListBase[list];
+    const uint room = (list + 1u < LISTS ? view.shadowListBase[list + 1u] : view.shadowListEnd) - base;
+    const uint wanted = uint(bitCount(views));
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint used = atomicAdd(counts.shadowUsed[list], wanted);
+    if (used + wanted > room)
+    {
+        atomicAdd(counts.shadowUsed[list], 0u - wanted);
+        turnAway(counts);
+        return;
+    }
+    const bool moving = movingCaster(instance);
+    uint slot = moving ? atomicAdd(counts.shadowMoving[list].instanceCount, wanted) : atomicAdd(counts.shadow[list].instanceCount, wanted);
+    ListWriteRef lists = ListWriteRef(view.shadowLists);
+    for (uint bits = views; bits != 0u; bits &= bits - 1u)
+    {
+        const uint at = moving ? base + room - 1u - slot : base + slot;
+        lists.items[at] = ListEntry(instanceIndex | (uint(findLSB(bits)) << SHADOW_VIEW_SHIFT), clusterId);
+        ++slot;
+    }
+    requestSkin(view, instance, false);
+}
+
+void addShadowGroup(ViewRef view, uint instanceIndex, uint groupId, uint views)
+{
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint slot = atomicAdd(counts.shadowGroups.entries, 1u);
+    if (slot >= view.shadowGroupEnd)
+    {
+        atomicAdd(counts.shadowGroups.entries, TAKE_BACK);
+        turnAway(counts);
+        return;
+    }
+    if (slot % GROUPS_PER_WORKGROUP == 0u)
+    {
+        atomicAdd(counts.shadowGroups.groups[0], 1u);
+    }
+    shadowGroups(view).items[slot] = ShadowGroupEntry(instanceIndex, groupId, views);
+}
+
+// The views a bound passes: inside the box, and for a static caster on a dirty tile too.
+uint castingViewsOf(ViewRef view, bool moving, vec3 relative, float radius, uint candidates)
+{
+    const uint inside = shadowViewsOf(view, relative, radius, candidates);
+    return moving || inside == 0u ? inside : dirtyViewsOf(view, relative, radius, inside);
+}
+
+// One LOD's groups or clusters into the views of `views`.
+void castShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry geometry, float scaleBound, uint views, bool moving)
+{
+    if (geometry.groupCount != 0u)
+    {
+        for (uint i = 0u; i < geometry.groupCount; ++i)
+        {
+            const ClusterGroup group = ClusterGroupsRef(push.clusters).items[geometry.firstGroup + i];
+            const uint passed = castingViewsOf(view, moving, transformPoint(instance.rows, group.center) - view.camera.xyz, group.radius * scaleBound, views);
+            if (passed != 0u)
+            {
+                addShadowGroup(view, instanceIndex, geometry.firstGroup + i, passed);
+            }
+        }
+        return;
+    }
+    for (uint i = 0u; i < geometry.clusterCount; ++i)
+    {
+        const Cluster cluster = ClustersRef(push.clusters).items[geometry.firstCluster + i];
+        const uint passed = castingViewsOf(view, moving, transformPoint(instance.rows, cluster.center) - view.camera.xyz, cluster.radius * scaleBound, views);
+        if (passed != 0u)
+        {
+            drawShadow(view, instance, instanceIndex, geometry.firstCluster + i, cluster.triangles, passed);
+        }
+    }
+}
+
+// A static caster's LOD in a shadow view: from the view's texel, as if a screen pixel were
+// that size (a 1080 pixel high, 60 degree view puts a pixel at distance / 935), so the cached
+// shadow does not depend on where the camera is.
+const float SHADOW_LOD_PIXELS = 935.0;
+uint shadowGeometry(ViewRef view, Instance instance, float scaleBound, float texel)
+{
+    return geometryAtDistance(view, instance, scaleBound, texel * SHADOW_LOD_PIXELS);
+}
+
+// `geometry` is the main view's LOD: a moving caster keeps it, as it is drawn every frame. A
+// static one takes each view's own; views in a row with the same LOD are culled together.
+void cullShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry geometry, float scaleBound)
+{
+    if (view.shadowCascades == 0u)
+    {
+        return;
+    }
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    const uint count = shadows.count;
+    const bool moving = movingCaster(instance);
+    const vec3 offset = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) - view.camera.xyz;
+    const uint views = castingViewsOf(view, moving, offset, geometry.radius * scaleBound, count >= 32u ? 0xFFFFFFFFu : (1u << count) - 1u);
+    if (views == 0u)
+    {
+        return;
+    }
+    if (moving)
+    {
+        castShadows(view, instance, instanceIndex, geometry, scaleBound, views, true);
+        return;
+    }
+    uint runId = 0u;
+    uint run = 0u;
+    for (uint bits = views; bits != 0u; bits &= bits - 1u)
+    {
+        const uint v = uint(findLSB(bits));
+        const uint id = shadowGeometry(view, instance, scaleBound, shadows.views[v].lightDirection.w);
+        if (run != 0u && id != runId)
+        {
+            castShadows(view, instance, instanceIndex, GeometriesRef(push.geometries).items[runId], scaleBound, run, false);
+            run = 0u;
+        }
+        runId = id;
+        run |= 1u << v;
+    }
+    if (run != 0u)
+    {
+        castShadows(view, instance, instanceIndex, GeometriesRef(push.geometries).items[runId], scaleBound, run, false);
+    }
+}
+
+// The shadow groups job: as cullGroupClusters(), each cluster tested against its group's views.
+void cullShadowGroupClusters(ViewRef view)
+{
+    const uint entryIndex = gl_WorkGroupID.x * GROUPS_PER_WORKGROUP + gl_LocalInvocationID.x / CLUSTER_GROUP_SIZE;
+    if (entryIndex >= CountsRef(push.output_counts).shadowGroups.entries)
+    {
+        return;
+    }
+    const ShadowGroupEntry entry = shadowGroups(view).items[entryIndex];
+    const ClusterGroup group = ClusterGroupsRef(push.clusters).items[entry.group];
+    const uint lane = gl_LocalInvocationID.x % CLUSTER_GROUP_SIZE;
+    if (lane >= group.clusterCount)
+    {
+        return;
+    }
+    const Instance instance = InstancesRef(push.instances).items[entry.instance];
+    const uint clusterId = group.firstCluster + lane;
+    const Cluster cluster = ClustersRef(push.clusters).items[clusterId];
+    const uint passed = castingViewsOf(view, movingCaster(instance), transformPoint(instance.rows, cluster.center) - view.camera.xyz,
+                                       cluster.radius * scaleBoundOf(instance), entry.views);
+    if (passed != 0u)
+    {
+        drawShadow(view, instance, entry.instance, clusterId, cluster.triangles, passed);
+    }
+}
+
 void cullInstance(ViewRef view, uint instanceIndex)
 {
     const Instance instance = InstancesRef(push.instances).items[instanceIndex];
@@ -399,6 +633,10 @@ void cullInstance(ViewRef view, uint instanceIndex)
     if (geometry.clusterCount == 0u)
     {
         return;
+    }
+    if (push.phase == CULL_EARLY)
+    {
+        cullShadows(view, instance, instanceIndex, geometry, scaleBound);
     }
 
     const vec3 center = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w);
@@ -485,6 +723,11 @@ void main()
     if (push.phase == MACOIT_GATE)
     {
         gateMacOITTail();
+        return;
+    }
+    if (push.phase == CULL_GROUPS_SHADOW)
+    {
+        cullShadowGroupClusters(view);
         return;
     }
     const bool late = latePhase();

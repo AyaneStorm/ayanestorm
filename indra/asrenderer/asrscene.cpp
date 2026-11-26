@@ -755,10 +755,11 @@ GpuSceneCounts sceneCountsTemplate()
         const uint32_t vertices = CLUSTER_BUCKET_TRIANGLES[list % CLUSTER_BUCKETS] * 3;
         counts.early[list].vertexCount = vertices;
         counts.late[list].vertexCount = vertices;
+        counts.shadow[list].vertexCount = vertices;
     }
     counts.selection.vertexCount = CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3; // one draw for every size
 
-    for (GpuWorkCount* work : { &counts.retest, &counts.groups[0], &counts.groups[1] })
+    for (GpuWorkCount* work : { &counts.retest, &counts.groups[0], &counts.groups[1], &counts.shadowGroups })
     {
         work->groups[1] = 1;
         work->groups[2] = 1;
@@ -847,6 +848,15 @@ void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneC
     view.pixelSize[1] = float(height);
     view.pixelSize[2] = 1.f / float(width);
     view.pixelSize[3] = 1.f / float(height);
+}
+
+void fillShadowView(GpuSceneView& view, uint32_t cascades, uint32_t mapSize, uint64_t shadowViews, uint64_t shadowLists)
+{
+    view.shadowCascades = std::min(cascades, SHADOW_CASCADES);
+    view.shadowDistance = view.farClip > 0.f ? std::min(SHADOW_DISTANCE, view.farClip) : SHADOW_DISTANCE; // farClip 0: no limit
+    view.shadowResolution = float(mapSize);
+    view.shadowViews = shadowViews;
+    view.shadowLists = shadowLists;
 }
 
 SceneQueue::SceneQueue() = default;

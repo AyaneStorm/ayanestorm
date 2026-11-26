@@ -108,6 +108,8 @@ bool sLookMoon = false; // --look-moon
 bool sLookSun = false;  // --look-sun: level, towards the sun's azimuth
 std::string sMoonMaps;  // --moon-maps DIR
 asr::ToneInput sTone;   // the sky's, as the viewer sets it (--sky starley)
+asr::ShadowInput sShadow; // --shadow-detail, --shadow-scale
+uint32_t sDebugView = 0;  // --debug-view
 bool sLookHorizon = false; // --look-horizon: a wide view towards the moon
 bool sClouds = false;   // --clouds
 std::string sCloudMap;  // --cloud-map FILE
@@ -3151,6 +3153,8 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         {
             state.hasCamera = true;
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
+            state.camera.debugView = sDebugView;
+            state.shadow = sShadow;
             state.sky = sSky;
             state.tone = sTone;
             state.anisotropy = sAnisotropy;
@@ -3374,8 +3378,9 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     if (city)
     {
         const asr::SceneStats stats = device->sceneStats();
-        printf("scene: %u instances, %.1f M triangles, %llu clusters drawn early, %llu late, %llu retested, %llu groups, %u chunks, %llu geometries waiting\n",
+        printf("scene: %u instances, %.1f M triangles, %llu clusters drawn early, %llu late, shadows %llu static + %llu moving, %llu retested, %llu groups, %u chunks, %llu geometries waiting\n",
                stats.instances, stats.triangles / 1e6, (unsigned long long)stats.earlyClusters, (unsigned long long)stats.lateClusters,
+               (unsigned long long)stats.shadowClusters, (unsigned long long)stats.shadowMovingClusters,
                (unsigned long long)stats.retestEntries, (unsigned long long)stats.groupEntries, stats.chunks, (unsigned long long)stats.pendingGeometries);
         if (stats.guardPixels != 0)
         {
@@ -3574,6 +3579,22 @@ int main(int argc, char** argv)
         else if (arg == "--exposure" && i + 1 < argc)
         {
             sTone.exposure = std::stof(argv[++i]); // RenderExposure: lifts faint skies into view
+        }
+        else if (arg == "--debug-view" && i + 1 < argc)
+        {
+            sDebugView = uint32_t(std::stoul(argv[++i])); // a DEBUG_VIEW_* of asrscene.h
+        }
+        else if (arg == "--shadow-detail" && i + 1 < argc)
+        {
+            sShadow.detail = uint32_t(std::stoul(argv[++i])); // RenderShadowDetail
+        }
+        else if (arg == "--shadow-scale" && i + 1 < argc)
+        {
+            sShadow.resolutionScale = std::stof(argv[++i]); // RenderShadowResolutionScale
+        }
+        else if (arg == "--shadow-sun-step" && i + 1 < argc)
+        {
+            sShadow.sunStep = std::stof(argv[++i]); // ASRendererShadowSunStep
         }
         else if (arg == "--sun-elevation" && i + 1 < argc)
         {

@@ -12039,6 +12039,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <real>0.04</real>
   </map>
+  <key>ASRendererShadowSunStep</key>
+  <map>
+    <key>Comment</key>
+    <string>New renderer: degrees the sun or moon may move before cached shadows are redrawn for its new place. Larger redraws less often; 0 redraws them every frame the light moves.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.25</real>
+  </map>
   <key>ASRendererExposureAdaptation</key>
   <map>
     <key>Comment</key>

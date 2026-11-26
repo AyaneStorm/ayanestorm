@@ -105,6 +105,14 @@ struct ToneInput
     float adaptation = 0.7f;              // ASRendererExposureAdaptation
 };
 
+// Shadow preferences, as OpenGL reads them.
+struct ShadowInput
+{
+    uint32_t detail = 1;          // RenderShadowDetail: 0 none, 1 sun and moon, 2 also projectors (step 3)
+    float resolutionScale = 1.f;  // RenderShadowResolutionScale: see shadowMapSize() in asrscene.h
+    float sunStep = 0.25f;        // ASRendererShadowSunStep, degrees: SHADOW_LIGHT_STEP; 0 follows the light every frame
+};
+
 // The presented frame, read back for tests (asrenderer_test --screenshot): 8-bit RGBA, top row
 // first. done stays false when the device needs a frame to get ready (Metal's layer turning
 // readable); ask again on the next frame.
@@ -126,6 +134,7 @@ struct FrameInput
     const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
     const SkyInput* sky = nullptr;         // the scene's sky; earthSky() when not set
     ToneInput tone{};
+    ShadowInput shadow{};
     float anisotropy = 1.f; // RenderAnisotropicLevel: every linear sampler's, 1 for none, up to the device's
     bool audit = false; // also looks for clusters occlusion culling lost
     OverlayInput overlay{}; // with the scene only
@@ -155,6 +164,8 @@ struct SceneStats
     uint64_t triangles = 0;           // in all instances, before culling
     uint64_t earlyClusters = 0;       // drawn by the first phase
     uint64_t lateClusters = 0;        // found by the second
+    uint64_t shadowClusters = 0;      // static shadow list entries, redrawn into dirty tiles, every shadow view
+    uint64_t shadowMovingClusters = 0; // moving ones, drawn every frame
     uint64_t retestEntries = 0;       // what the first phase left for the second
     uint64_t groupEntries = 0;        // cluster groups tested a thread per cluster, both phases
     uint32_t guardBits = 0;           // temporary: the resolve's failed checks since the start, GUARD_*

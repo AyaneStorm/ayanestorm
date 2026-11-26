@@ -42,6 +42,18 @@ namespace
 constexpr uint64_t BLOB_ALIGNMENT = 16;
 constexpr uint32_t MINIMUM_LIST_CAPACITY = 1024;
 
+// FNV-1a: tells whether an instance's transform or state changed since it was last set.
+uint64_t hashBytes(const void* data, size_t bytes)
+{
+    uint64_t hash = 14695981039346656037ull;
+    const uint8_t* at = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < bytes; ++i)
+    {
+        hash = (hash ^ at[i]) * 1099511628211ull;
+    }
+    return hash;
+}
+
 uint32_t bucketOf(uint32_t triangles)
 {
     uint32_t bucket = 0;
@@ -265,6 +277,11 @@ uint64_t SceneStore::visibleCapacity() const
         total += listCapacity(list);
     }
     return total;
+}
+
+uint64_t SceneStore::shadowListBytes() const
+{
+    return visibleCapacity() * SHADOW_CASCADES * sizeof(GpuListEntry) + groupCapacity() * SHADOW_GROUP_ENTRY_BYTES;
 }
 
 void SceneStore::hudList(std::vector<GpuListEntry>& entries, uint32_t& opaque, uint32_t& selected) const
@@ -533,6 +550,14 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
     GpuInstance instance{};
     if (command.type == InstanceCommand::Type::Remove)
     {
+        if (current.cachedSphere[3] > 0.f)
+        {
+            staleShadow(current.cachedSphere);
+        }
+        current.cachedSphere[3] = 0.f;
+        current.matrixHash = current.stateHash = 0;
+        current.moving = false;
+        mMovingInstances.erase(command.id);
         writeEntry(SceneTable::Instances, command.id, &instance, sizeof(instance));
         mRetired.push_back({ Retired::Type::InstanceId, command.id, 0, 0, frame + mFreeDelay });
         return;
@@ -610,8 +635,106 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
             instance = GpuInstance{}; // its skeleton, skin or weights are missing: nothing to draw
         }
     }
+
+    // The static shadow cache. A move makes the instance moving content (drawn every frame,
+    // its cached shadow taken out) until it settles; any other change redraws its old and new
+    // bound. Instances on skeletons and HUD ones are never cached.
+    const bool cached = instance.geometry != 0 && (instance.flags & (INSTANCE_BOUND | INSTANCE_HUD)) == 0;
+    const uint64_t matrixHash = hashBytes(desc.objectToWorld, sizeof(desc.objectToWorld));
+    const uint64_t stateHash = hashBytes(&instance, sizeof(instance));
+    if (!cached)
+    {
+        if (current.cachedSphere[3] > 0.f)
+        {
+            staleShadow(current.cachedSphere);
+        }
+        current.cachedSphere[3] = 0.f;
+        current.moving = false;
+        mMovingInstances.erase(command.id);
+    }
+    else if ((current.matrixHash != 0 && matrixHash != current.matrixHash) || current.moving)
+    {
+        if (!current.moving && current.cachedSphere[3] > 0.f)
+        {
+            staleShadow(current.cachedSphere);
+        }
+        current.cachedSphere[3] = 0.f;
+        if (matrixHash != current.matrixHash)
+        {
+            current.movedFrame = frame;
+        }
+        current.moving = true;
+        instance.flags |= INSTANCE_MOVING;
+        mMovingInstances[command.id] = instance;
+    }
+    else if (stateHash != current.stateHash)
+    {
+        if (current.cachedSphere[3] > 0.f)
+        {
+            staleShadow(current.cachedSphere);
+        }
+        instanceSphere(instance, current.cachedSphere);
+        staleShadow(current.cachedSphere);
+    }
+    current.matrixHash = cached ? matrixHash : 0;
+    current.stateHash = cached ? stateHash : 0;
+
     writeEntry(SceneTable::Instances, command.id, &instance, sizeof(instance));
     mInstanceEnd = std::max(mInstanceEnd, command.id + 1);
+}
+
+void SceneStore::instanceSphere(const GpuInstance& instance, float sphere[4]) const
+{
+    float scale = 0.f;
+    for (int row = 0; row < 3; ++row)
+    {
+        sphere[row] = instance.rows[row][3];
+        scale += instance.rows[row][0] * instance.rows[row][0] + instance.rows[row][1] * instance.rows[row][1] + instance.rows[row][2] * instance.rows[row][2];
+    }
+    sphere[3] = mGeometries[instance.geometry].radius * std::sqrt(scale); // as scaleBoundOf() in the cull
+}
+
+void SceneStore::staleShadow(const float sphere[4])
+{
+    if (mShadowDirty.size() / 4 >= SHADOW_MAX_DIRTY)
+    {
+        mShadowRebake = true;
+        return;
+    }
+    mShadowDirty.insert(mShadowDirty.end(), sphere, sphere + 4);
+}
+
+uint32_t SceneStore::copyShadowDirty(float* out) const
+{
+    if (mShadowRebake)
+    {
+        out[0] = out[1] = out[2] = 0.f;
+        out[3] = -1.f;
+        return 1;
+    }
+    memcpy(out, mShadowDirty.data(), mShadowDirty.size() * sizeof(float));
+    return uint32_t(mShadowDirty.size() / 4);
+}
+
+void SceneStore::settleMoving(uint64_t frame)
+{
+    for (auto it = mMovingInstances.begin(); it != mMovingInstances.end();)
+    {
+        InstanceUse& use = mInstanceUses[it->first];
+        if (frame - use.movedFrame < SHADOW_SETTLE_FRAMES)
+        {
+            ++it;
+            continue;
+        }
+        GpuInstance instance = it->second;
+        instance.flags &= ~INSTANCE_MOVING;
+        writeEntry(SceneTable::Instances, it->first, &instance, sizeof(instance));
+        instanceSphere(instance, use.cachedSphere);
+        staleShadow(use.cachedSphere);
+        use.moving = false;
+        use.stateHash = hashBytes(&instance, sizeof(instance));
+        it = mMovingInstances.erase(it);
+    }
 }
 
 uint32_t SceneStore::allocateRange(SceneTable table, uint64_t size)
@@ -1471,6 +1594,16 @@ void SceneStore::fillView(GpuSceneView& view) const
     }
     view.instanceEnd = mInstanceEnd;
     view.visibleEnd = base;
+    // A cluster can be in every cascade, so each shadow list has room for that. A shadow
+    // group entry holds a mask of its views, so one per group is enough.
+    uint32_t shadowBase = 0;
+    for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+    {
+        view.shadowListBase[list] = shadowBase;
+        shadowBase += listCapacity(list) * SHADOW_CASCADES;
+    }
+    view.shadowListEnd = shadowBase;
+    view.shadowGroupEnd = uint32_t(groupCapacity());
     view.clusterEnd = uint32_t(tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
     view.materialEnd = uint32_t(tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
     view.groupEnd = uint32_t(groupCapacity());
@@ -1650,6 +1783,11 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     entry.coarser = geometry.coarser;
     entry.coarserAt = geometry.coarserAt;
     writeEntry(SceneTable::Geometries, id, &entry, sizeof(entry));
+    // Instances already shown can now choose this LOD: cached static shadows are redrawn.
+    for (uint32_t kind = 0; kind < SCENE_KINDS && !geometry.skinned; ++kind)
+    {
+        mShadowRebake = mShadowRebake || geometry.instances[kind] != 0;
+    }
 
     SceneWrite write;
     write.chunk = chunkIndex;
@@ -1774,6 +1912,8 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     mPositionsCompacted = false;
     ++mUpdate;
     mQueue = &queue;
+    mShadowDirty.clear();
+    mShadowRebake = false;
 
     if (!mStarted)
     {
@@ -1808,6 +1948,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     {
         applyInstance(mCommands.instances[mInstancesDone++], frame);
     }
+    settleMoving(frame);
     if (!mTaking && mInstancesDone == mCommands.instances.size())
     {
         // After the instances, so bindings made in this update follow too.

@@ -75,6 +75,10 @@ enum SceneResult : ResultId
     ResultExposure,      // GpuExposure, from the sky: read by shading and the composite
     ResultBloom,         // bloom's levels in one atlas, read by the composite
     ResultResolveTiles,  // GpuResolveTiles: the resolve's tiles and dispatches by material kind
+    ResultShadowViews,   // GpuShadowViews: the cascades, placed by the shadow fit pass
+    ResultShadowLists,   // the shadow views' clusters, tagged by view, then their group entries
+    ResultSunShadow,     // the sun's or moon's cascades, a depth layer each
+    ResultShadowCache,   // their static casters alone, kept between frames
     ResultCount
 };
 
@@ -87,8 +91,10 @@ enum ScenePass : PassId
     PassSkinMorph,
     PassSkinClusters,
     PassSkinGroups,
-    PassCullEarly,
+    PassShadowFit,     // the cascades, from last frame's depth
+    PassCullEarly,     // the main view and every shadow view
     PassGroupsEarly,
+    PassShadowGroups,  // before skinning, so shadow casters ask for it as drawn clusters do
     PassSkinVertices,
     PassSkinAudit,
     PassDrawEarly,
@@ -98,6 +104,10 @@ enum ScenePass : PassId
     PassSkinVerticesLate,
     PassDrawLate,
     PassPyramidFinal,
+    PassShadowShift,   // the static cache into the working map, scrolled, dirty tiles emptied
+    PassShadowDraw,    // static casters into dirty tiles, every shadow view in one draw per list
+    PassShadowStore,   // the working map back into the cache
+    PassShadowMoving,  // moving casters on top
     PassTransmittanceLut,
     PassMultiscatterLut,
     PassSkyViewLut,

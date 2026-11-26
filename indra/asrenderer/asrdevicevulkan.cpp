@@ -76,15 +76,25 @@ constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour, pre-exposed; alpha is glow
 constexpr VkFormat SKY_TABLE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT; // see createSky
-constexpr uint32_t SCENE_IMAGE_BINDINGS = 20; // set 1, see createScene()
+constexpr VkFormat SHADOW_FORMAT = VK_FORMAT_D16_UNORM; // sun and moon cascades: see asrscene.h
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 22; // set 1, see createScene()
+constexpr uint32_t SCENE_BINDING_SUN_SHADOW = 20; // asrShadow.glsl's sunShadow
+constexpr uint32_t SCENE_BINDING_SHADOW_CACHE = 21; // asrShadowShiftF.glsl's shadowCache
 constexpr uint32_t SCENE_BINDING_FREE = 1;     // a number no shader declares
 constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
-constexpr uint32_t SCENE_SAMPLED_BINDINGS = 5; // the depth and the sky's four tables
+constexpr uint32_t SCENE_SAMPLED_BINDINGS = 7; // the depth, the sky's four tables, the sun's shadow and its cache
 
-// Set 1's sampled images: the depth, and the sky's tables. The rest are storage images.
+// Set 1's sampled images: the depth, the sky's tables, the sun's shadow and its cache. The rest are storage images.
 bool sceneBindingSampled(uint32_t binding)
 {
-    return binding == 3 || (binding >= SKY_FIRST_SAMPLED_BINDING && binding < SKY_FIRST_SAMPLED_BINDING + 4);
+    return binding == 3 || binding == SCENE_BINDING_SUN_SHADOW || binding == SCENE_BINDING_SHADOW_CACHE ||
+           (binding >= SKY_FIRST_SAMPLED_BINDING && binding < SKY_FIRST_SAMPLED_BINDING + 4);
+}
+
+// Depth images read through set 1, kept in the depth read layout.
+bool sceneBindingDepth(uint32_t binding)
+{
+    return binding == 3 || binding == SCENE_BINDING_SUN_SHADOW || binding == SCENE_BINDING_SHADOW_CACHE;
 }
 constexpr VkFormat SELECTION_MASK_FORMAT = VK_FORMAT_R8G8B8A8_UNORM; // see asrOverlayMaskF.glsl
 
@@ -108,7 +118,8 @@ bool hasRequiredFeatures(VkPhysicalDevice gpu)
 
     // Mac OIT writes storage from fragments and reads its RG32F weights in the resolve.
     if (!features.features.shaderInt64 || !features.features.drawIndirectFirstInstance ||
-        !features.features.fragmentStoresAndAtomics || !features.features.shaderStorageImageExtendedFormats)
+        !features.features.fragmentStoresAndAtomics || !features.features.shaderStorageImageExtendedFormats ||
+        !features.features.depthClamp)
     {
         return false;
     }
@@ -119,7 +130,7 @@ bool hasRequiredFeatures(VkPhysicalDevice gpu)
 
     return v13.dynamicRendering && v13.synchronization2 && v13.shaderDemoteToHelperInvocation && v12.timelineSemaphore &&
            v12.descriptorIndexing && v12.bufferDeviceAddress && v12.descriptorBindingPartiallyBound &&
-           v12.descriptorBindingSampledImageUpdateAfterBind && v12.shaderSampledImageArrayNonUniformIndexing &&
+           v12.descriptorBindingSampledImageUpdateAfterBind && v12.shaderSampledImageArrayNonUniformIndexing && v12.shaderOutputLayer &&
            limits.maxPerStageDescriptorUpdateAfterBindSampledImages >= MAX_TEXTURES &&
            limits.maxDescriptorSetUpdateAfterBindSampledImages >= MAX_TEXTURES;
 }
@@ -350,6 +361,10 @@ public:
             mWorldViewOffset = { int32_t(x), int32_t(y) };
             mWorldViewExtent = { std::min(input.worldView[2], mExtent.width - x), std::min(input.worldView[3], mExtent.height - y) };
         }
+        // RenderShadowDetail 0 keeps a 1 texel map: the set always names one.
+        mShadowCascades = input.shadow.detail > 0 ? SHADOW_CASCADES : 0;
+        mShadowLightStep = std::cos(std::max(input.shadow.sunStep, 0.f) * 0.0174532925f);
+        mWantedShadowSize = mShadowCascades != 0 ? shadowMapSize(mMemoryBudget.budget(), input.shadow.resolutionScale) : 1;
         if (input.camera && !ensureSceneTargets())
         {
             return false;
@@ -730,7 +745,9 @@ private:
         v12.descriptorBindingPartiallyBound = VK_TRUE;
         v12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         v12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        v12.shaderOutputLayer = VK_TRUE; // the shadow draw sends each cluster to its view's layer
         VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
+        features.features.depthClamp = VK_TRUE; // shadow casters beyond a cascade's light side
         features.features.shaderInt64 = VK_TRUE;
         features.features.drawIndirectFirstInstance = VK_TRUE; // the cull's draws start at their list's place
         features.features.fragmentStoresAndAtomics = VK_TRUE; // Mac OIT keys, tail flag and texture feedback
@@ -1290,6 +1307,8 @@ private:
         bool alphaBlend = false;      // source over, as the HUD and the outlines
         bool depthFormat = false;     // a depth target is bound, though not tested
         bool depthEqualPasses = false; // as OpenGL's LEQUAL: at equal depth the later draw wins
+        bool shadow = false;          // a shadow map: SHADOW_FORMAT, depth clamp, both sides; no fragment shader with a null name
+        bool depthAlways = false;     // every fragment's depth is written, whatever was there
     };
 
     VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, VkFormat colorFormat, bool depth, std::string& error)
@@ -1305,9 +1324,9 @@ private:
     {
         const bool depth = setup.depthTest;
         VkShaderModule vertex = loadShader(vertexName, error);
-        VkShaderModule fragment = vertex ? loadShader(fragmentName, error) : VK_NULL_HANDLE;
+        VkShaderModule fragment = vertex && fragmentName ? loadShader(fragmentName, error) : VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
-        if (fragment)
+        if (fragment || (vertex && !fragmentName))
         {
             VkPipelineShaderStageCreateInfo stages[2] = { { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO },
                                                           { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO } };
@@ -1326,7 +1345,8 @@ private:
             viewport.scissorCount = 1;
             VkPipelineRasterizationStateCreateInfo raster{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
             raster.polygonMode = VK_POLYGON_MODE_FILL;
-            raster.cullMode = depth ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+            raster.cullMode = depth && !setup.shadow ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE; // OpenGL's shadows cast from both sides
+            raster.depthClampEnable = setup.shadow;
             raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
             raster.lineWidth = 1.f;
             VkPipelineMultisampleStateCreateInfo multisample{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
@@ -1334,7 +1354,8 @@ private:
             VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
             depthStencil.depthTestEnable = depth;
             depthStencil.depthWriteEnable = setup.depthWrite;
-            depthStencil.depthCompareOp = setup.depthEqualPasses ? VK_COMPARE_OP_GREATER_OR_EQUAL
+            depthStencil.depthCompareOp = setup.depthAlways ? VK_COMPARE_OP_ALWAYS
+                                        : setup.depthEqualPasses ? VK_COMPARE_OP_GREATER_OR_EQUAL
                                                                  : VK_COMPARE_OP_GREATER; // reversed depth: nearer is larger
             std::vector<VkPipelineColorBlendAttachmentState> attachments(setup.colors.size());
             for (VkPipelineColorBlendAttachmentState& attachment : attachments)
@@ -1377,15 +1398,15 @@ private:
             // Double-sided lists turn culling off, with no pipelines just for that.
             const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
             VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-            dynamic.dynamicStateCount = depth ? 3 : 2;
+            dynamic.dynamicStateCount = depth && !setup.shadow ? 3 : 2;
             dynamic.pDynamicStates = dynamics;
             VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
             rendering.colorAttachmentCount = uint32_t(setup.colors.size());
             rendering.pColorAttachmentFormats = setup.colors.data();
-            rendering.depthAttachmentFormat = depth || setup.depthFormat ? DEPTH_FORMAT : VK_FORMAT_UNDEFINED;
+            rendering.depthAttachmentFormat = setup.shadow ? SHADOW_FORMAT : depth || setup.depthFormat ? DEPTH_FORMAT : VK_FORMAT_UNDEFINED;
 
             VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering };
-            create.stageCount = 2;
+            create.stageCount = fragment ? 2 : 1;
             create.pStages = stages;
             create.pVertexInputState = &vertexInput;
             create.pInputAssemblyState = &assembly;
@@ -1478,7 +1499,7 @@ private:
         mEncodeBC1Pipeline = mTextureMipPipeline ? createComputePipeline("asrEncodeBC1C", error) : VK_NULL_HANDLE;
         mEncodeBC45Pipeline = mEncodeBC1Pipeline ? createComputePipeline("asrEncodeBC45C", error) : VK_NULL_HANDLE;
         mEncodeBC7Pipeline = mEncodeBC45Pipeline ? createComputePipeline("asrEncodeBC7C", error) : VK_NULL_HANDLE;
-        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error) || !createOverlayPipelines(error) || !createSky(error))
+        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error) || !createOverlayPipelines(error) || !createSky(error) || !createShadows(error))
         {
             return false;
         }
@@ -1487,6 +1508,8 @@ private:
         setPassBodies();
         mResultImages[ResultVisibility] = &mVisibilityImage;
         mResultImages[ResultDepth] = &mDepthImage;
+        mResultImages[ResultSunShadow] = &mSunShadow;
+        mResultImages[ResultShadowCache] = &mShadowCache;
         mResultImages[ResultNormals] = &mNormalImage;
         mResultImages[ResultLit] = &mLitImage;
         mResultImages[ResultSceneColor] = &mSceneColorImage;
@@ -1575,6 +1598,124 @@ private:
         return check(vkCreateImageView(mDevice, &view, nullptr, &target.view), what);
     }
 
+    // Sun and moon shadows (see asrscene.h): the views the fit pass writes, kept between
+    // frames, and the pipelines. The maps are made with the scene targets: createSunShadow().
+    bool createShadows(std::string& error)
+    {
+        RasterSetup setup;
+        setup.depthTest = true;
+        setup.depthWrite = true;
+        setup.shadow = true;
+        mShadowFitPipeline = createComputePipeline("asrShadowFitC", error);
+        mShadowPipeline = mShadowFitPipeline ? createSceneRasterPipeline("asrShadowV", nullptr, setup, error) : VK_NULL_HANDLE;
+        mShadowMaskedPipeline = mShadowPipeline ? createSceneRasterPipeline("asrShadowMaskedV", "asrShadowMaskedF", setup, error) : VK_NULL_HANDLE;
+        RasterSetup shift;
+        shift.depthTest = true;
+        shift.depthWrite = true;
+        shift.shadow = true;
+        shift.depthAlways = true; // every texel written, from the cache or empty
+        mShadowShiftPipeline = mShadowMaskedPipeline ? createSceneRasterPipeline("asrShadowShiftV", "asrShadowShiftF", shift, error) : VK_NULL_HANDLE;
+        if (!mShadowShiftPipeline ||
+            !createBufferObject(mShadowViews, sizeof(GpuShadowViews), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "shadow views",
+                                MemoryCategory::Shadows, true))
+        {
+            return false;
+        }
+        for (MappedBuffer& spheres : mShadowDirty)
+        {
+            if (!growBuffer(spheres, SHADOW_MAX_DIRTY * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, MemoryCategory::Staging, "shadow dirty spheres"))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The working map and the static cache, `size` texels across (shadowMapSize()); remade
+    // when the size changes, with the scene targets, so the scene set names them. Nothing is
+    // cached in new maps: the fit redraws every cascade (mShadowReset).
+    bool createSunShadow(uint32_t size)
+    {
+        if (!createShadowArray(mSunShadow, size, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, "sun shadow") ||
+            !createShadowArray(mShadowCache, size, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "shadow cache"))
+        {
+            return false;
+        }
+        mSunShadowSize = size;
+        mShadowReset = true;
+        return true;
+    }
+
+    bool createShadowArray(TargetImage& target, uint32_t size, VkImageUsageFlags usage, const char* what)
+    {
+        const uint64_t bytes = uint64_t(size) * size * SHADOW_CASCADES * 2;
+        mMemoryBudget.reserveAnyway(MemoryCategory::Shadows, bytes);
+        VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.format = SHADOW_FORMAT;
+        image.extent = { size, size, 1 };
+        image.mipLevels = 1;
+        image.arrayLayers = SHADOW_CASCADES;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = usage;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        allocation.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        if (!check(vmaCreateImage(mAllocator, &image, &allocation, &target.image, &target.allocation, nullptr), what))
+        {
+            mMemoryBudget.release(MemoryCategory::Shadows, bytes);
+            return false;
+        }
+        target.bytes = bytes;
+        VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+        view.image = target.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        view.format = SHADOW_FORMAT;
+        view.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, SHADOW_CASCADES };
+        return check(vkCreateImageView(mDevice, &view, nullptr, &target.view), what);
+    }
+
+    void destroyShadowArray(TargetImage& target)
+    {
+        if (target.view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(mDevice, target.view, nullptr);
+        }
+        if (target.image != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(mAllocator, target.image, target.allocation);
+            mMemoryBudget.release(MemoryCategory::Shadows, target.bytes);
+        }
+        target = TargetImage();
+    }
+
+    void destroySunShadow()
+    {
+        destroyShadowArray(mSunShadow);
+        destroyShadowArray(mShadowCache);
+        mSunShadowSize = 0;
+    }
+
+    void destroyShadows()
+    {
+        destroySunShadow();
+        destroyBufferObject(mShadowViews, MemoryCategory::Shadows);
+        destroyBufferObject(mShadowLists, MemoryCategory::Geometry);
+        for (MappedBuffer& spheres : mShadowDirty)
+        {
+            destroyBuffer(spheres, MemoryCategory::Staging);
+        }
+        for (VkPipeline pipeline : { mShadowFitPipeline, mShadowPipeline, mShadowMaskedPipeline, mShadowShiftPipeline })
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(mDevice, pipeline, nullptr);
+            }
+        }
+        mShadowFitPipeline = mShadowPipeline = mShadowMaskedPipeline = mShadowShiftPipeline = VK_NULL_HANDLE;
+    }
+
     void destroyTarget(TargetImage& target)
     {
         if (target.view != VK_NULL_HANDLE)
@@ -1593,13 +1734,21 @@ private:
     // have finished by the time it changes.
     bool ensureSceneTargets()
     {
-        if (mSceneExtent.width == mWorldViewExtent.width && mSceneExtent.height == mWorldViewExtent.height)
+        if (mSceneExtent.width == mWorldViewExtent.width && mSceneExtent.height == mWorldViewExtent.height && mSunShadowSize == mWantedShadowSize)
         {
             return true;
         }
         if (!check(vkDeviceWaitIdle(mDevice), "wait for device"))
         {
             return false;
+        }
+        if (mSunShadowSize != mWantedShadowSize)
+        {
+            destroySunShadow();
+            if (!createSunShadow(mWantedShadowSize))
+            {
+                return false;
+            }
         }
         destroyTarget(mVisibilityImage);
         destroyTarget(mDepthImage);
@@ -1648,7 +1797,7 @@ private:
                                                           mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
-                                                          mBloomImage.view };
+                                                          mBloomImage.view,       mSunShadow.view,        mShadowCache.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
         uint32_t count = 0;
@@ -1659,7 +1808,7 @@ private:
                 continue;
             }
             images[count].imageView = views[i];
-            images[count].imageLayout = i == 3 ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+            images[count].imageLayout = sceneBindingDepth(i) ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
             writes[count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[count].dstSet = mSceneSet;
             writes[count].dstBinding = i;
@@ -2560,6 +2709,7 @@ private:
         destroyTarget(mUIDepth);
         destroyMacOITTargets();
         destroyMacOITPipelines();
+        destroyShadows();
         destroySky();
         destroyOverlay();
         for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mClassifyPipeline, mResolvePipelines[0],
@@ -3746,6 +3896,10 @@ private:
         {
             return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
         }
+        if (uses & GraphAccess::CopyWrite)
+        {
+            return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        }
         return aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
     }
 
@@ -3767,7 +3921,8 @@ private:
                 memory.dstAccessMask |= accessOf(transition.destination);
                 continue;
             }
-            const VkImageAspectFlags aspect = target == &mDepthImage || target == &mUIDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            const VkImageAspectFlags aspect = target == &mDepthImage || target == &mUIDepth || target == &mSunShadow || target == &mShadowCache
+                                            ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
             VkImageMemoryBarrier2& barrier = images[imageCount++];
             barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
             barrier.srcStageMask = stagesOf(transition.source);
@@ -3779,7 +3934,7 @@ private:
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = target->image;
-            barrier.subresourceRange = { aspect, 0, 1, 0, 1 };
+            barrier.subresourceRange = { aspect, 0, 1, 0, VK_REMAINING_ARRAY_LAYERS }; // the sun's shadow has a layer per cascade
         }
         VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
         dependency.memoryBarrierCount = memory.dstStageMask != 0 ? 1 : 0;
@@ -3877,7 +4032,7 @@ private:
         const uint64_t groupBytes = mSceneStore.groupCapacity() * sizeof(GpuListEntry);
         const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.groupCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
         if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list") ||
-            !growList(mSceneGroups, groupBytes, "group list"))
+            !growList(mSceneGroups, groupBytes, "group list") || !growList(mShadowLists, mSceneStore.shadowListBytes(), "shadow lists"))
         {
             return false;
         }
@@ -3953,6 +4108,13 @@ private:
         view.atmosphere = viewAddress + sizeof(GpuSceneView);
         view.exposure = mSky.exposure.address;
         view.resolveTiles = mResolveTiles.address;
+        fillShadowView(view, mShadowCascades, mSunShadowSize, mShadowViews.address, mShadowLists.address);
+        view.shadowLightStep = mShadowLightStep;
+        view.shadowDirtyCount = mSceneStore.copyShadowDirty(static_cast<float*>(mShadowDirty[slot].mapped));
+        vmaFlushAllocation(mAllocator, mShadowDirty[slot].allocation, 0, uint64_t(view.shadowDirtyCount) * 16);
+        address.buffer = mShadowDirty[slot].buffer;
+        view.shadowDirty = vkGetBufferDeviceAddress(mDevice, &address);
+        address.buffer = mSceneViews[slot].buffer;
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
         view.toneMapper = mRecordTone.mapper;
@@ -4004,6 +4166,10 @@ private:
         if (phase == CULL_LATE)
         {
             vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, retest));
+        }
+        else if (phase == CULL_GROUPS_SHADOW)
+        {
+            vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, shadowGroups));
         }
         else if (phase >= CULL_GROUPS_EARLY)
         {
@@ -4070,6 +4236,91 @@ private:
                 const uint32_t list = sceneList(kind, bucket);
                 vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, offsetof(ScenePush, list), sizeof(list), &list);
                 vkCmdDrawIndirect(commands, mSceneCounts.buffer, argumentsOffset + list * sizeof(GpuDrawArguments), 1, sizeof(GpuDrawArguments));
+            }
+        }
+        vkCmdEndRendering(commands);
+        return true;
+    }
+
+    bool passShadowFit()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        if (mShadowReset)
+        {
+            // New maps hold nothing: no view is valid, so every cascade is redrawn.
+            vkCmdFillBuffer(commands, mShadowViews.buffer, 0, VK_WHOLE_SIZE, 0);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            mShadowReset = false;
+        }
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mShadowFitPipeline);
+        pushScene(commands);
+        vkCmdDispatch(commands, 1, 1, 1);
+        return true;
+    }
+
+    void beginShadowRendering(VkCommandBuffer commands, bool load)
+    {
+        VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth.imageView = mSunShadow.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = load ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, { mSunShadowSize, mSunShadowSize } };
+        rendering.layerCount = SHADOW_CASCADES;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(commands, &rendering);
+
+        const VkViewport viewport{ 0.f, 0.f, float(mSunShadowSize), float(mSunShadowSize), 0.f, 1.f };
+        const VkRect2D scissor{ { 0, 0 }, { mSunShadowSize, mSunShadowSize } };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+    }
+
+    // The cache shifted into the working map, dirty tiles emptied (asrShadowShiftF.glsl).
+    bool passShadowShift()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        beginShadowRendering(commands, false);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mShadowShiftPipeline);
+        pushScene(commands);
+        vkCmdDraw(commands, 3, SHADOW_CASCADES, 0, 0);
+        vkCmdEndRendering(commands);
+        return true;
+    }
+
+    // The working map, static casters drawn, becomes next frame's cache.
+    bool passShadowStore()
+    {
+        VkImageCopy region{};
+        region.srcSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, SHADOW_CASCADES };
+        region.dstSubresource = region.srcSubresource;
+        region.extent = { mSunShadowSize, mSunShadowSize, 1 };
+        vkCmdCopyImage(mRecordCommands, mSunShadow.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mShadowCache.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        return true;
+    }
+
+    // Every shadow view in one draw per list: the vertex shader picks each entry's layer.
+    // Static casters into dirty tiles, or moving ones on top (SHADOW_DRAW_*).
+    bool passShadowDraw(uint32_t phase)
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        beginShadowRendering(commands, true);
+        mScenePush.phase = phase;
+        pushScene(commands);
+        const uint64_t arguments = phase == SHADOW_DRAW_MOVING ? offsetof(GpuSceneCounts, shadowMoving) : offsetof(GpuSceneCounts, shadow);
+        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind) // blended kinds cast through their alpha
+        {
+            const bool solid = kind < SCENE_OPAQUE_KINDS && (kind & 2) == 0;
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, solid ? mShadowPipeline : mShadowMaskedPipeline);
+            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            {
+                const uint32_t list = sceneList(kind, bucket);
+                vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, offsetof(ScenePush, list), sizeof(list), &list);
+                vkCmdDrawIndirect(commands, mSceneCounts.buffer, arguments + list * sizeof(GpuDrawArguments), 1, sizeof(GpuDrawArguments));
             }
         }
         vkCmdEndRendering(commands);
@@ -4185,8 +4436,14 @@ private:
                 return phase == SKIN_AUDIT && !mGraph.isRunning(PassAuditCull) ? true : passSkin(phase);
             });
         }
+        mGraph.setBody(PassShadowFit, [this]() { return passShadowFit(); });
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
+        mGraph.setBody(PassShadowGroups, [this]() { return passCull(CULL_GROUPS_SHADOW); });
+        mGraph.setBody(PassShadowShift, [this]() { return passShadowShift(); });
+        mGraph.setBody(PassShadowDraw, [this]() { return passShadowDraw(SHADOW_DRAW_STATIC); });
+        mGraph.setBody(PassShadowStore, [this]() { return passShadowStore(); });
+        mGraph.setBody(PassShadowMoving, [this]() { return passShadowDraw(SHADOW_DRAW_MOVING); });
         mGraph.setBody(PassGroupsLate, [this]() { return passCull(CULL_GROUPS_LATE); });
         mGraph.setBody(PassAuditGroups, [this]() { return passCull(CULL_GROUPS_AUDIT); });
         mGraph.setBody(PassDrawEarly, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, early), false, false); });
@@ -4230,10 +4487,14 @@ private:
             mDiagnostics.completedScene(mFrame - FRAMES_IN_FLIGHT, *counts, *static_cast<const GpuSceneView*>(mSceneViews[slot].mapped));
             mSceneFrameStats.earlyClusters = 0;
             mSceneFrameStats.lateClusters = 0;
+            mSceneFrameStats.shadowClusters = 0;
+            mSceneFrameStats.shadowMovingClusters = 0;
             for (uint32_t list = 0; list < SCENE_LISTS; ++list)
             {
                 mSceneFrameStats.earlyClusters += counts->early[list].instanceCount;
                 mSceneFrameStats.lateClusters += counts->late[list].instanceCount;
+                mSceneFrameStats.shadowClusters += counts->shadow[list].instanceCount;
+                mSceneFrameStats.shadowMovingClusters += counts->shadowMoving[list].instanceCount;
             }
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
@@ -4802,6 +5063,20 @@ private:
     GpuBuffer mSceneCounts;
     GpuBuffer mScenePyramid;
     GpuBuffer mResolveTiles; // GpuResolveTiles, sized with the scene
+    GpuBuffer mShadowLists;  // the shadow lists, then the shadow group entries: SceneStore::shadowListBytes()
+    GpuBuffer mShadowViews;  // GpuShadowViews, written by the shadow fit pass
+    TargetImage mSunShadow;  // a depth layer per cascade, mSunShadowSize across
+    TargetImage mShadowCache; // the same, static casters alone, kept between frames
+    MappedBuffer mShadowDirty[FRAMES_IN_FLIGHT]; // GpuSceneView::shadowDirty, per slot
+    VkPipeline mShadowShiftPipeline = VK_NULL_HANDLE;
+    bool mShadowReset = true; // new maps: the views buffer is cleared, so every cascade is redrawn
+    uint32_t mSunShadowSize = 0;
+    uint32_t mWantedShadowSize = 1; // from ShadowInput, each frame
+    uint32_t mShadowCascades = 0;   // 0: RenderShadowDetail 0
+    float mShadowLightStep = 1.f;   // GpuSceneView::shadowLightStep
+    VkPipeline mShadowFitPipeline = VK_NULL_HANDLE;
+    VkPipeline mShadowPipeline = VK_NULL_HANDLE;
+    VkPipeline mShadowMaskedPipeline = VK_NULL_HANDLE;
     MappedBuffer mSceneCountsTemplate;
     MappedBuffer mSceneViews[FRAMES_IN_FLIGHT];
     MappedBuffer mSceneStaging[FRAMES_IN_FLIGHT];

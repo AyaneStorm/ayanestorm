@@ -950,6 +950,12 @@ void ASRViewer::publishFrame(LLWindow* window)
     static LLCachedControl<bool> limit_framerate(gSavedSettings, "FSLimitFramerate", false);
     static LLCachedControl<U32> max_fps(gSavedSettings, "FramePerSecondLimit", 0);
     state.maxFramesPerSecond = limit_framerate() ? F32(max_fps()) : 0.f;
+    static LLCachedControl<S32> shadowDetail(gSavedSettings, "RenderShadowDetail", 2);
+    static LLCachedControl<F32> shadowScale(gSavedSettings, "RenderShadowResolutionScale", 1.f);
+    state.shadow.detail = U32(llmax(S32(shadowDetail()), 0));
+    state.shadow.resolutionScale = llmax(F32(shadowScale()), 0.f);
+    static LLCachedControl<F32> sunStep(gSavedSettings, "ASRendererShadowSunStep", 0.25f);
+    state.shadow.sunStep = llclamp(F32(sunStep()), 0.f, 10.f);
     // Everything read from the viewer's world: see worldReady().
     if (worldReady())
     {

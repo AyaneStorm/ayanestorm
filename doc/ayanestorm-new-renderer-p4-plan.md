@@ -95,6 +95,21 @@ As the shadow study describes:
 
 **Tests:** the shadow study's measurement list.
 
+- **Batch 1, written 26 November 2026; Vulkan `asrenderer_test` shows shadows, 0 validation errors; Metal and viewer unbuilt.** Timings, 3080 Ti, city scene, sun +30: GPU total 0.86 ms without shadows, 2.33 ms with (shadow draw 1.31, early cull +0.06, shadow groups 0.06, resolve +0.02); stall test passes in both.
+  - `shadow fit` (`asrShadowFitC`): 4 cascades centred on the camera, each out to its split (a fixed area whichever way the camera looks, so batch 2's cache survives turning), centre snapped to whole texels. Reach as OpenGL's: twice the farthest depth seen last frame (pyramid's 1 by 1 level), 16 to 512 m, within the draw distance. Light: the sun when above the horizon, else the moon.
+  - The early cull tests each instance against the main view, then every shadow view: one load, size bound and LOD per instance. Bounds are transformed once and tested against each view left in a mask; groups go to `shadow groups` with that mask. No facing test and culling off when drawn, as OpenGL's shadow pass. Shadow casters ask for skinning before `skin vertices`, first request wins.
+  - `shadow draw`: one indirect draw per list for all cascades; the vertex shader writes `gl_Layer` from the entry's view tag. Depth clamp keeps casters beyond the light side. D16.
+  - Alpha as OpenGL's `shadowAlphaMaskF.glsl`: cut at the material cutoff, then times the colour alpha (not fullbright); under 0.05 none, under 0.88 every other column.
+  - `asr_shadow_sun()` / `sunMoonShadow()` in `asrShadow.glsl`: finest cascade holding the point, normal offset 1.5 texels, depth bias 1 texel, 3 by 3 tent PCF from 4 gathers (no comparison sampler), fade over the last 10% of the reach. Shadows the sun or moon term and its highlight in the resolve (surface, terrain) and Mac OIT.
+  - Preferences: `RenderShadowDetail` 0 turns shadows off (a 1 texel map stays bound); `RenderShadowResolutionScale` scales the tier's size (2048, 1024 under a 6 GB budget), 512 to 4096, the map remade when it changes.
+  - Debug view 8: each pixel's cascade as a colour, darker where shadowed. Test flags `--debug-view`, `--shadow-detail`, `--shadow-scale`.
+  - First count, city scene: 267k shadow entries against 49k drawn on screen (no occlusion in shadow views). Batch 2's static cache is what brings this down.
+- **Batch 2a, static cache: written 26 November 2026; Vulkan `asrenderer_test` 0 validation errors, cascades checked in debug view 8 with the camera orbiting; Metal and viewer unbuilt.** As the shadow study's item 2 (shift, static into dirty tiles, store, moving on top). Store: `INSTANCE_MOVING` while a transform changed in the last 30 frames, world spheres of stale cached shadows (`GpuSceneView::shadowDirty`), a full redraw when an LOD in use arrives. Static casters take each cascade's LOD from its texel. `ASRendererShadowSunStep` (0.25 degrees; 0 follows the light) and test flag `--shadow-sun-step`.
+  - City scene, 3080 Ti, sun +30, camera orbiting: GPU total 2.33 ms uncached, 1.37 ms cached (shift 0.18, store 0.10, draws 0.05; 17.5k moving clusters, the test moves objects every frame); 0.87 ms without shadows. Half resolution: 1.00 ms.
+  - **Metal, same day: batches 1 and 2a tested in `asrenderer_test` on the M4, 0 validation errors**; the city image's mean matches Vulkan's within 0.1/255, shadows darken it by 13/255. GPU total 5.30 ms without shadows, 6.59 ms with (shift 0.66, static redraw 0.84 while the camera orbits). `asr_spirv2msl` keeps set 1 bindings 20 and 21 at their numbers.
+  - Open: on the M4 the shift pass, a fragment depth write over every texel, costs 0.66 ms; to look at.
+  - Open: the street scene redraws about 2k static clusters a frame while walking (0.34 ms, noisy); clusters are rasterized over the whole layer, not only their dirty tiles. The stall check fails in the street scene with shadows off too: not from shadows.
+
 ### 5. Volumetric lighting
 
 - **Froxel grid,** no history: atmosphere in-scattering with shadows, local fog, local lights, clouds' effect on the haze.
@@ -246,6 +261,7 @@ Every graphics slider is checked against what GL does with it and replicated whe
 ## Order and dependencies
 
 - **Reordered 26 November 2026 (user):** after step 2's legacy materials, LL's built-in bump maps, then shadows (step 4), then the probes study and probes (step 7), and only then PBR (step 2's batch 3). Legacy shading follows OpenGL line for line, but OpenGL multiplies its sun highlight by the shadow and takes both environment terms from reflection probes and screen-space reflections. With the sky alone (OpenGL's own path with probes off), tiles, bricks and hair shone like metal at sunset. PBR depends on the environment even more, so it is built once against real shadows and probes. Cost: PBR faces keep their base colour only until then. Debug views 6 (no environment terms) and 7 (no highlights) compare the two terms meanwhile.
+- **Local lights placed 26 November 2026 (user):** sun and moon cascades, then local lights (step 3) with the shadow atlas, then probes, then PBR. Shadows are finished in one go, while the shadow view array is fresh.
 
 - 1 before 2: lighting reads the sky's results.
 - 2 before 3: local lights use the same material and light functions.

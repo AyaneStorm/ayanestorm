@@ -609,6 +609,7 @@ void RenderThread::run()
         }
         input.sky = &state.sky;
         input.tone = state.tone;
+        input.shadow = state.shadow;
         input.anisotropy = state.anisotropy;
         input.audit = state.audit;
         input.overlay = state.overlay;

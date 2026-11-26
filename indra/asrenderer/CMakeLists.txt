@@ -100,7 +100,8 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrOverlayV asrOverlayMaskF asrOverlayHudF asrOverlayOutlineF asrOverlayDepthF
         asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
         asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
-        asrSkyStarsV asrSkyStarsF asrSceneBloomC)
+        asrSkyStarsV asrSkyStarsF asrSceneBloomC
+        asrShadowFitC asrShadowV asrShadowMaskedV asrShadowMaskedF asrShadowShiftV asrShadowShiftF)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 # The texture encoders share their block loading and line fitting.

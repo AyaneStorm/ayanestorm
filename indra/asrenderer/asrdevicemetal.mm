@@ -315,6 +315,10 @@ public:
             }
             mRecordSky = input.sky ? *input.sky : earthSky();
             mRecordTone = input.tone;
+            // RenderShadowDetail 0 keeps a 1 texel map: the shaders always name one.
+            mShadowCascades = input.shadow.detail > 0 ? SHADOW_CASCADES : 0;
+            mShadowLightStep = std::cos(std::max(input.shadow.sunStep, 0.f) * 0.0174532925f);
+            mWantedShadowSize = mShadowCascades != 0 ? shadowMapSize(mMemoryBudget.budget(), input.shadow.resolutionScale) : 1;
             useAnisotropy(slot, input.anisotropy);
             if (input.camera && !recordScene(commands, slot, *input.camera, worldWidth, worldHeight, input.audit, input.overlay))
             {
@@ -661,6 +665,86 @@ private:
         return pipeline;
     }
 
+    id<MTLRenderPipelineState> createShadowPipeline(id<MTLFunction> vertex, id<MTLFunction> fragment, std::string& error)
+    {
+        MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+        descriptor.vertexFunction = vertex;
+        descriptor.fragmentFunction = fragment; // nil: depth only
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth16Unorm;
+        descriptor.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle; // the vertex picks the layer
+        NSError* failure = nil;
+        id<MTLRenderPipelineState> pipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+        if (!pipeline)
+        {
+            error = std::string("shadow pipeline: ") + failure.localizedDescription.UTF8String;
+        }
+        return pipeline;
+    }
+
+    // Sun and moon shadows (see asrscene.h): the views the fit pass writes, kept between
+    // frames, the dirty spheres per slot, and the pipelines. The maps: ensureSunShadow().
+    bool createShadows(const std::string& shaderDir, std::string& error)
+    {
+        mShadowFitPipeline = createComputePipeline(shaderDir, "asrShadowFitC", error);
+        id<MTLFunction> vertex = loadFunction(shaderDir, "asrShadowV", error);
+        id<MTLFunction> maskedVertex = loadFunction(shaderDir, "asrShadowMaskedV", error);
+        id<MTLFunction> maskedFragment = loadFunction(shaderDir, "asrShadowMaskedF", error);
+        id<MTLFunction> shiftVertex = loadFunction(shaderDir, "asrShadowShiftV", error);
+        id<MTLFunction> shiftFragment = loadFunction(shaderDir, "asrShadowShiftF", error);
+        if (!mShadowFitPipeline || !vertex || !maskedVertex || !maskedFragment || !shiftVertex || !shiftFragment)
+        {
+            return false;
+        }
+        mShadowPipeline = createShadowPipeline(vertex, nil, error);
+        mShadowMaskedPipeline = createShadowPipeline(maskedVertex, maskedFragment, error);
+        mShadowShiftPipeline = createShadowPipeline(shiftVertex, shiftFragment, error);
+        MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
+        depth.depthCompareFunction = MTLCompareFunctionGreater; // depth 1 lies towards the light
+        depth.depthWriteEnabled = YES;
+        mShadowDepthState = [mDevice newDepthStencilStateWithDescriptor:depth];
+        depth.depthCompareFunction = MTLCompareFunctionAlways;
+        mShadowShiftDepthState = [mDevice newDepthStencilStateWithDescriptor:depth];
+        mShadowViews = createSceneBuffer(sizeof(GpuShadowViews), MemoryCategory::Shadows, "shadow views", true);
+        for (id<MTLBuffer> __strong& spheres : mShadowDirty)
+        {
+            spheres = createSceneBuffer(SHADOW_MAX_DIRTY * 16, MemoryCategory::Staging, "shadow dirty spheres", true);
+        }
+        return mShadowPipeline && mShadowMaskedPipeline && mShadowShiftPipeline && mShadowViews && mShadowDirty[FRAMES_IN_FLIGHT - 1];
+    }
+
+    // The working map and the static cache, mWantedShadowSize across; remade when that
+    // changes, and then nothing is cached: the fit redraws every cascade (mShadowReset).
+    bool ensureSunShadow()
+    {
+        if (mShadowSize == mWantedShadowSize && mSunShadow)
+        {
+            return true;
+        }
+        const uint64_t bytes = uint64_t(mShadowSize) * mShadowSize * SHADOW_CASCADES * 2;
+        if (mSunShadow)
+        {
+            mMemoryBudget.release(MemoryCategory::Shadows, 2 * bytes);
+        }
+        mShadowSize = mWantedShadowSize;
+        mMemoryBudget.reserveAnyway(MemoryCategory::Shadows, 2 * uint64_t(mShadowSize) * mShadowSize * SHADOW_CASCADES * 2);
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth16Unorm
+                                                                                              width:mShadowSize height:mShadowSize mipmapped:NO];
+        descriptor.textureType = MTLTextureType2DArray;
+        descriptor.arrayLength = SHADOW_CASCADES;
+        descriptor.storageMode = MTLStorageModePrivate;
+        descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        mSunShadow = [mDevice newTextureWithDescriptor:descriptor];
+        descriptor.usage = MTLTextureUsageShaderRead;
+        mShadowCache = [mDevice newTextureWithDescriptor:descriptor];
+        mShadowReset = true;
+        if (!mSunShadow || !mShadowCache)
+        {
+            mError = "cannot create the sun's shadow maps";
+            return false;
+        }
+        return true;
+    }
+
     bool createScene(const std::string& shaderDir, std::string& error)
     {
         mCullPipeline = createComputePipeline(shaderDir, "asrSceneCullC", error);
@@ -695,7 +779,8 @@ private:
 
         mVisibilityPipeline = createVisibilityPipeline(visibilityVertex, visibilityFragment, error);
         mMaskedPipeline = createVisibilityPipeline(maskedVertex, maskedFragment, error);
-        if (!mVisibilityPipeline || !mMaskedPipeline || !createMacOITPipelines(shaderDir, error) || !createSky(shaderDir, error))
+        if (!mVisibilityPipeline || !mMaskedPipeline || !createMacOITPipelines(shaderDir, error) || !createSky(shaderDir, error) ||
+            !createShadows(shaderDir, error))
         {
             return false;
         }
@@ -1243,6 +1328,7 @@ private:
             [draw setFragmentTexture:mMacOIT.moments atIndex:4];
             [draw setFragmentTexture:mMacOIT.tailDepth atIndex:5];
             [draw setFragmentTexture:mSky.aerial atIndex:18];
+            [draw setFragmentTexture:mSunShadow atIndex:20]; // asrShadow.glsl
         }
         for (uint32_t kind = SCENE_BLENDED_KIND; kind < SCENE_KINDS; ++kind)
         {
@@ -1719,7 +1805,7 @@ private:
         const uint64_t groupBytes = mSceneStore.groupCapacity() * sizeof(GpuListEntry);
         const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.groupCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
         if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list") ||
-            !growList(mSceneGroups, groupBytes, "group list"))
+            !growList(mSceneGroups, groupBytes, "group list") || !growList(mShadowLists, mSceneStore.shadowListBytes(), "shadow lists"))
         {
             [blit endEncoding];
             return false;
@@ -1785,6 +1871,10 @@ private:
         view.atmosphere = addressOf(mSceneViews[slot]) + sizeof(GpuSceneView);
         view.exposure = addressOf(mSky.exposure);
         view.resolveTiles = addressOf(mResolveTiles);
+        fillShadowView(view, mShadowCascades, mShadowSize, addressOf(mShadowViews), addressOf(mShadowLists));
+        view.shadowLightStep = mShadowLightStep;
+        view.shadowDirtyCount = mSceneStore.copyShadowDirty(static_cast<float*>(mShadowDirty[slot].contents));
+        view.shadowDirty = addressOf(mShadowDirty[slot]);
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
         view.toneMapper = mRecordTone.mapper;
@@ -1830,6 +1920,11 @@ private:
         if (phase == CULL_LATE)
         {
             [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, retest)
+                                   threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        }
+        else if (phase == CULL_GROUPS_SHADOW)
+        {
+            [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, shadowGroups)
                                    threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
         }
         else if (phase >= CULL_GROUPS_EARLY)
@@ -1902,6 +1997,97 @@ private:
         return true;
     }
 
+    bool passShadowFit()
+    {
+        if (mShadowReset)
+        {
+            // New maps hold nothing: no view is valid, so every cascade is redrawn.
+            id<MTLBlitCommandEncoder> clear = [mRecordCommands blitCommandEncoder];
+            [clear waitForFence:mSceneFence];
+            [clear fillBuffer:mShadowViews range:NSMakeRange(0, sizeof(GpuShadowViews)) value:0];
+            [clear updateFence:mSceneFence];
+            [clear endEncoding];
+            mShadowReset = false;
+        }
+        id<MTLComputeCommandEncoder> fit = beginCompute();
+        [fit setComputePipelineState:mShadowFitPipeline];
+        [fit setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [fit dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+        [fit updateFence:mSceneFence];
+        [fit endEncoding];
+        return true;
+    }
+
+    // The working map, every cascade's layer: depth clamp keeps casters beyond the light side.
+    id<MTLRenderCommandEncoder> beginShadowPass(bool load)
+    {
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.depthAttachment.texture = mSunShadow;
+        pass.depthAttachment.loadAction = load ? MTLLoadActionLoad : MTLLoadActionDontCare;
+        pass.depthAttachment.storeAction = MTLStoreActionStore;
+        pass.renderTargetArrayLength = SHADOW_CASCADES;
+        attachPassSamples(pass);
+        id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
+        draw.label = passLabel();
+        [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
+        [draw setDepthClipMode:MTLDepthClipModeClamp];
+        [draw setCullMode:MTLCullModeNone]; // OpenGL's shadows cast from both sides
+        [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
+        return draw;
+    }
+
+    // The cache shifted into the working map, dirty tiles emptied (asrShadowShiftF.glsl).
+    bool passShadowShift()
+    {
+        id<MTLRenderCommandEncoder> draw = beginShadowPass(false);
+        [draw setRenderPipelineState:mShadowShiftPipeline];
+        [draw setDepthStencilState:mShadowShiftDepthState];
+        [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [draw setFragmentBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [draw setFragmentTexture:mShadowCache atIndex:21];
+        [draw drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 instanceCount:SHADOW_CASCADES];
+        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
+        [draw endEncoding];
+        return true;
+    }
+
+    // Every shadow view in one draw per list: the vertex shader picks each entry's layer.
+    // Static casters into dirty tiles, or moving ones on top (SHADOW_DRAW_*).
+    bool passShadowDraw(uint32_t phase)
+    {
+        id<MTLRenderCommandEncoder> draw = beginShadowPass(true);
+        [draw setDepthStencilState:mShadowDepthState];
+        mScenePush.phase = phase;
+        const uint64_t arguments = phase == SHADOW_DRAW_MOVING ? offsetof(GpuSceneCounts, shadowMoving) : offsetof(GpuSceneCounts, shadow);
+        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind) // blended kinds cast through their alpha
+        {
+            const bool solid = kind < SCENE_OPAQUE_KINDS && (kind & 2) == 0;
+            [draw setRenderPipelineState:solid ? mShadowPipeline : mShadowMaskedPipeline];
+            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            {
+                mScenePush.list = sceneList(kind, bucket);
+                [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+                [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts
+                  indirectBufferOffset:arguments + mScenePush.list * sizeof(GpuDrawArguments)];
+            }
+        }
+        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
+        [draw endEncoding];
+        return true;
+    }
+
+    // The working map, static casters drawn, becomes next frame's cache.
+    bool passShadowStore()
+    {
+        id<MTLBlitCommandEncoder> copy = [mRecordCommands blitCommandEncoder];
+        [copy waitForFence:mSceneFence];
+        [copy copyFromTexture:mSunShadow sourceSlice:0 sourceLevel:0 toTexture:mShadowCache destinationSlice:0 destinationLevel:0
+                   sliceCount:SHADOW_CASCADES levelCount:1];
+        [copy updateFence:mSceneFence];
+        [copy endEncoding];
+        return true;
+    }
+
     bool passPyramid()
     {
         id<MTLComputeCommandEncoder> encoder = beginCompute();
@@ -1942,6 +2128,7 @@ private:
         [resolve setTexture:mVisibilityTarget atIndex:0];
         [resolve setTexture:mNormalTarget atIndex:2];
         [resolve setTexture:mLitTarget atIndex:8];
+        [resolve setTexture:mSunShadow atIndex:20]; // asrShadow.glsl
         bindSkyTables(resolve); // the background
         // Each kind writes only its own pixels, so the dispatches need nothing between them.
         for (uint32_t kind = 0; kind < RESOLVE_KINDS; ++kind)
@@ -2027,6 +2214,12 @@ private:
                 return phase == SKIN_AUDIT && !mGraph.isRunning(PassAuditCull) ? true : passSkin(phase);
             });
         }
+        mGraph.setBody(PassShadowFit, [this]() { return passShadowFit(); });
+        mGraph.setBody(PassShadowGroups, [this]() { return passCull(CULL_GROUPS_SHADOW); });
+        mGraph.setBody(PassShadowShift, [this]() { return passShadowShift(); });
+        mGraph.setBody(PassShadowDraw, [this]() { return passShadowDraw(SHADOW_DRAW_STATIC); });
+        mGraph.setBody(PassShadowStore, [this]() { return passShadowStore(); });
+        mGraph.setBody(PassShadowMoving, [this]() { return passShadowDraw(SHADOW_DRAW_MOVING); });
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
         mGraph.setBody(PassGroupsLate, [this]() { return passCull(CULL_GROUPS_LATE); });
@@ -2084,10 +2277,14 @@ private:
             const GpuSceneCounts* counts = static_cast<const GpuSceneCounts*>(mSceneReadback[slot].contents);
             mSceneFrameStats.earlyClusters = 0;
             mSceneFrameStats.lateClusters = 0;
+            mSceneFrameStats.shadowClusters = 0;
+            mSceneFrameStats.shadowMovingClusters = 0;
             for (uint32_t list = 0; list < SCENE_LISTS; ++list)
             {
                 mSceneFrameStats.earlyClusters += counts->early[list].instanceCount;
                 mSceneFrameStats.lateClusters += counts->late[list].instanceCount;
+                mSceneFrameStats.shadowClusters += counts->shadow[list].instanceCount;
+                mSceneFrameStats.shadowMovingClusters += counts->shadowMoving[list].instanceCount;
             }
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
@@ -2140,7 +2337,7 @@ private:
                      const OverlayInput& overlay)
     {
         readSceneResults(slot);
-        if (!ensureSceneTargets(width, height))
+        if (!ensureSceneTargets(width, height) || !ensureSunShadow())
         {
             return false;
         }
@@ -3166,6 +3363,23 @@ private:
     id<MTLBuffer> mSceneCounts = nil;
     id<MTLBuffer> mScenePyramid = nil;
     id<MTLBuffer> mResolveTiles = nil; // GpuResolveTiles, sized with the scene
+    // Sun and moon shadows: see asrscene.h and the Vulkan device's members of the same names.
+    id<MTLBuffer> mShadowLists = nil;
+    id<MTLBuffer> mShadowViews = nil;
+    id<MTLBuffer> mShadowDirty[FRAMES_IN_FLIGHT] = {};
+    id<MTLTexture> mSunShadow = nil;   // the working map, a layer per cascade
+    id<MTLTexture> mShadowCache = nil; // static casters alone, kept between frames
+    id<MTLComputePipelineState> mShadowFitPipeline = nil;
+    id<MTLRenderPipelineState> mShadowPipeline = nil;
+    id<MTLRenderPipelineState> mShadowMaskedPipeline = nil;
+    id<MTLRenderPipelineState> mShadowShiftPipeline = nil;
+    id<MTLDepthStencilState> mShadowDepthState = nil;      // nearer the light wins
+    id<MTLDepthStencilState> mShadowShiftDepthState = nil; // every texel written
+    uint32_t mShadowSize = 0;
+    uint32_t mWantedShadowSize = 1;
+    uint32_t mShadowCascades = 0;
+    float mShadowLightStep = 1.f;
+    bool mShadowReset = true;
     id<MTLBuffer> mSceneCountsTemplate = nil;
     id<MTLBuffer> mSceneViews[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneReadback[FRAMES_IN_FLIGHT];

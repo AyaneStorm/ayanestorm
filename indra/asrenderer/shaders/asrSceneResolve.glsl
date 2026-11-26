@@ -21,6 +21,7 @@ layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
 #include "asrAtmosphere.glsl"
 #include "asrSkyClouds.glsl"
 #include "asrSceneLighting.glsl"
+#include "asrShadow.glsl"
 
 vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy); // below
 
@@ -370,9 +371,9 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     return shown; // kept inside half floats once exposed, where the lit image is written
 }
 
-vec4 shadeSurface(vec3 albedo, vec3 normal)
+vec4 shadeSurface(vec3 albedo, vec3 normal, vec2 shadow)
 {
-    return vec4(lightSurface(albedo, normal), 0.0);
+    return vec4(lightSurface(albedo, normal, shadow), 0.0);
 }
 
 struct Interpolator
@@ -723,8 +724,9 @@ void main()
 
     const Atmosphere atmosphere = loadAtmosphere(view.atmosphere);
     const vec3 surfacePoint = world * bary.weights;
+    const vec2 shadow = sunMoonShadow(surfacePoint - view.camera.xyz, worldNormal); // the surface's own normal, before maps
 #if RESOLVE_KIND == 2 // RESOLVE_KIND_TERRAIN
-    vec4 shown = shadeSurface(color.rgb, worldNormal);
+    vec4 shown = shadeSurface(color.rgb, worldNormal, shadow);
 #else
     if ((material.flags & (MATERIAL_FLAG_NORMAL_MAP | MATERIAL_FLAG_BUMP_BRIGHTNESS | MATERIAL_FLAG_BUMP_DARKNESS)) != 0u)
     {
@@ -757,6 +759,7 @@ void main()
     surface.envIntensity = material.envIntensity * specularSample.a;
     surface.emissive = (material.flags & MATERIAL_FLAG_FULLBRIGHT) != 0u ? 1.0
                      : (material.flags & MATERIAL_FLAG_EMISSIVE_ALPHA) != 0u ? color.a : 0.0;
+    surface.shadow = shadow;
     vec4 shown = vec4(shadeLegacy(atmosphere, surface, normalize(view.camera.xyz - surfacePoint)), 0.0);
 #endif
     imageStore(normals, pixel, vec4(worldNormal, 1.0));
@@ -772,6 +775,15 @@ void main()
     else if (view.debugView == DEBUG_VIEW_ALPHA_MODE)
     {
         shown = (instance.flags & INSTANCE_MASKED) != 0u ? vec4(0.1, 0.8, 0.1, 1.0) : vec4(0.5, 0.5, 0.5, 1.0);
+    }
+    else if (view.debugView == DEBUG_VIEW_SHADOW_CASCADES)
+    {
+        // Magenta: no cascade this frame. Grey: past the last. Darker: shadowed.
+        const uint cascade = shadowCascadeAt(surfacePoint - view.camera.xyz);
+        const vec3 tints[4] = vec3[](vec3(1.0, 0.3, 0.3), vec3(0.3, 1.0, 0.3), vec3(0.3, 0.3, 1.0), vec3(1.0, 1.0, 0.3));
+        const vec3 tint = ShadowViewsRef(view.shadowViews).count == 0u ? vec3(1.0, 0.0, 1.0)
+                        : cascade == SHADOW_NO_CASCADE ? vec3(0.5) : tints[cascade & 3u];
+        shown = vec4(tint * (0.25 + 0.75 * shadow.x * shadow.y) / max(ExposureRef(view.exposure).exposure, 1e-20), 1.0); // shown as is
     }
     else if (view.debugView == DEBUG_VIEW_CLUSTERS)
     {

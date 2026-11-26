@@ -64,6 +64,10 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("exposure", ResultScope::Frame);
     graph.addResult("bloom", ResultScope::Frame);
     graph.addResult("resolve tiles", ResultScope::Frame);
+    graph.addResult("shadow views", ResultScope::Persistent); // last frame's windows place this frame's cache
+    graph.addResult("shadow lists", ResultScope::Frame);
+    graph.addResult("sun shadow", ResultScope::Frame);
+    graph.addResult("shadow cache", ResultScope::Persistent);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -75,19 +79,29 @@ void declareSceneGraph(FrameGraph& graph)
     {
         graph.addPass(name, { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     }
+    // The cascades from last frame's farthest depth, before the cull that reads them.
+    graph.addPass("shadow fit", { { ResultDepthPyramid, ComputeRead | PreviousFrame },
+                                  { ResultShadowViews, ComputeRead | ComputeWrite | Keep } });
+    // Shadow views are culled in the same threads as the main view: see asrscene.h.
     graph.addPass("cull early", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                   { ResultDepthPyramid, ComputeRead | PreviousFrame },
+                                  { ResultShadowViews, ComputeRead },
                                   { ResultDrawArguments, ComputeWrite | Keep },
                                   { ResultVisibleClusters, ComputeWrite },
                                   { ResultRetestList, ComputeWrite },
                                   { ResultGroupList, ComputeWrite },
-                                  { ResultSelectionList, ComputeWrite } });
+                                  { ResultSelectionList, ComputeWrite },
+                                  { ResultShadowLists, ComputeWrite } });
     graph.addPass("groups early", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                     { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                     { ResultGroupList, ComputeRead },
                                     { ResultDrawArguments, Indirect | ComputeWrite | Keep },
                                     { ResultVisibleClusters, ComputeWrite | Keep },
                                     { ResultRetestList, ComputeWrite | Keep } });
+    graph.addPass("shadow groups", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
+                                     { ResultShadowViews, ComputeRead },
+                                     { ResultDrawArguments, Indirect | ComputeWrite | Keep },
+                                     { ResultShadowLists, ComputeRead | ComputeWrite | Keep } });
     graph.addPass("skin vertices", { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     // Its body is a no-op outside audit mode. Audit positions must follow deformation,
     // while the read-counts pass must still see their results in the same frame.
@@ -117,6 +131,22 @@ void declareSceneGraph(FrameGraph& graph)
                                  { ResultVisibility, ColorTarget | Keep },
                                  { ResultDepth, DepthTarget | Keep } });
     graph.addPass("pyramid final", { { ResultDepth, ComputeRead }, { ResultDepthPyramid, ComputeWrite | Keep } });
+    // The static cache (see asrShadowShiftF.glsl): shifted into the working map, static
+    // casters drawn into its dirty tiles, copied back, then moving casters on top.
+    graph.addPass("shadow shift", { { ResultShadowViews, FragmentRead },
+                                    { ResultShadowCache, FragmentRead | PreviousFrame },
+                                    { ResultSunShadow, DepthTarget } });
+    graph.addPass("shadow draw", { { ResultSceneData, VertexRead },
+                                   { ResultDrawArguments, Indirect },
+                                   { ResultShadowViews, VertexRead },
+                                   { ResultShadowLists, VertexRead },
+                                   { ResultSunShadow, DepthTarget | Keep } });
+    graph.addPass("shadow store", { { ResultSunShadow, CopyRead | Keep }, { ResultShadowCache, CopyWrite } });
+    graph.addPass("shadow moving", { { ResultSceneData, VertexRead },
+                                     { ResultDrawArguments, Indirect },
+                                     { ResultShadowViews, VertexRead },
+                                     { ResultShadowLists, VertexRead },
+                                     { ResultSunShadow, DepthTarget | Keep } });
     // The sky's tables, rebuilt every frame since EEP skies blend: each reads the ones before.
     graph.addPass("transmittance lut", { { ResultTransmittanceLut, ComputeWrite } });
     graph.addPass("multiscatter lut", { { ResultTransmittanceLut, ComputeRead }, { ResultMultiscatterLut, ComputeWrite } });
@@ -140,6 +170,8 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultSkyViewLut, ComputeRead },
                                { ResultAerialLut, ComputeRead },
                                { ResultExposure, ComputeRead },
+                               { ResultShadowViews, ComputeRead },
+                               { ResultSunShadow, ComputeRead },
                                { ResultNormals, ComputeWrite },
                                { ResultLit, ComputeWrite },
                                { ResultTextureFeedback, ComputeWrite | Keep } });
@@ -226,6 +258,8 @@ void declareMacOIT(FrameGraph& graph)
                                     { ResultMacOITTailDepth, FragmentRead },
                                     { ResultExposure, FragmentRead },
                                     { ResultAerialLut, FragmentRead },
+                                    { ResultShadowViews, FragmentRead },
+                                    { ResultSunShadow, FragmentRead },
                                     { ResultMacOITColor, ColorTarget },
                                     { ResultMacOITWeights, ColorTarget },
                                     { ResultTextureFeedback, FragmentWrite | Keep } });

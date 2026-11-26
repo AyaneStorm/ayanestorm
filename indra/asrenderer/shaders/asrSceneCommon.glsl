@@ -19,6 +19,7 @@ const uint INSTANCE_SKINNED = 8u;
 const uint INSTANCE_BOUND = 16u;
 const uint INSTANCE_BLENDED = 32u;
 const uint INSTANCE_HUD = 64u;
+const uint INSTANCE_MOVING = 1u << 18;
 const uint INSTANCE_FACE_SELECTED = 1u << 19;
 const uint INSTANCE_OUTLINE_SHIFT = 20u; // 4 bits, SELECTION_COLOR_*, 0: not outlined
 const uint INSTANCE_OUTLINE_MASK = 15u << INSTANCE_OUTLINE_SHIFT;
@@ -281,7 +282,69 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     float glowStrength;      // RenderGlowStrength, 0 with RenderGlow off
     float exposureAdaptation; // ASRendererExposureAdaptation
     uint64_t resolveTiles;   // ResolveTilesRef below
+    uint shadowListBase[LISTS]; // GpuSceneView::shadowListBase: shadows, see asrscene.h
+    uint shadowListEnd;
+    uint shadowGroupEnd;
+    uint shadowCascades;
+    float shadowDistance;
+    uint64_t shadowViews;    // ShadowViewsRef below
+    uint64_t shadowLists;
+    float shadowResolution;
+    uint shadowDirtyCount;
+    uint64_t shadowDirty;    // vec4 spheres: GpuSceneView::shadowDirty
+    float shadowLightStep;
 };
+
+// Shadow views, as GpuShadowViews: the shadow fit pass writes them, the cull, the shadow draw
+// and every shadow reader read them.
+const uint SHADOW_CASCADES = 4u;
+const uint SHADOW_VIEW_SHIFT = 26u;
+const uint SHADOW_INSTANCE_MASK = (1u << SHADOW_VIEW_SHIFT) - 1u;
+const uint SHADOW_LIGHT_NONE = 0u;
+const uint SHADOW_LIGHT_SUN = 1u;
+const uint SHADOW_LIGHT_MOON = 2u;
+struct ShadowView
+{
+    mat4 viewProjection;  // camera-relative world to clip; depth 1 towards the light
+    vec4 planes[6];       // camera-relative
+    vec4 lightDirection;  // towards the light; w: metres per texel
+    float depthRange;     // metres from depth 0 to depth 1
+    uint layer;
+    ivec2 origin;         // GpuShadowView: the static cache's window and state
+    ivec2 previousOrigin;
+    float depthOrigin;
+    float lodScale;
+    uint valid;
+    float pad[3];
+};
+const uint MAX_SHADOW_VIEWS = 32u;
+const uint SHADOW_TILES = 32u;
+const uint SHADOW_DRAW_STATIC = 0u;
+const uint SHADOW_DRAW_MOVING = 1u;
+layout(buffer_reference, std430) buffer ShadowViewsRef
+{
+    vec4 splits;
+    uint count;
+    uint light;
+    float pad[2];
+    vec4 cachedLight;
+    ShadowView views[MAX_SHADOW_VIEWS];
+    uint dirty[];         // [view * SHADOW_TILES + tile row], a bit per tile
+};
+layout(buffer_reference, std430) readonly buffer SpheresRef { vec4 items[]; };
+
+// The dirty tiles a texel range [low, high) of a shadow map's window covers, as row bits.
+uint shadowTileBits(float low, float high, float tileTexels)
+{
+    const int first = max(int(floor(low / tileTexels)), 0);
+    const int last = min(int(ceil(high / tileTexels)) - 1, int(SHADOW_TILES) - 1);
+    if (last < first)
+    {
+        return 0u;
+    }
+    const uint count = uint(last - first + 1);
+    return (count >= 32u ? 0xFFFFFFFFu : (1u << count) - 1u) << uint(first);
+}
 
 // The resolve's tiles by material kind (asrSceneClassifyC.glsl), as GpuResolveTiles: a
 // dispatch per kind, then each kind's list of tiles, x | y << 16, tileCapacity() apart.
@@ -342,6 +405,7 @@ const uint DEBUG_VIEW_CLUSTERS = 4u;
 const uint DEBUG_VIEW_NO_OCCLUSION = 5u;
 const uint DEBUG_VIEW_NO_ENVIRONMENT = 6u; // legacy shading without its environment terms
 const uint DEBUG_VIEW_NO_HIGHLIGHT = 7u;   // legacy shading without sun and moon highlights
+const uint DEBUG_VIEW_SHADOW_CASCADES = 8u;
 
 // The sphere touches the view frustum and is nearer than the far clip.
 bool insideView(ViewRef view, vec3 center, float radius)
@@ -472,7 +536,9 @@ void shBasis(vec3 n, out float y[9])
 // and the sky and ground around (irradiance from the exposure pass's harmonics, Ramamoorthi
 // and Hanrahan 2001). Opaque surfaces and every Mac OIT layer take this one function, so a
 // blended layer is lit as what it covers.
-vec3 surfaceIrradiance(vec3 normal)
+// `shadow` is the sun's and the moon's share reaching the surface (sunMoonShadow() in
+// asrShadow.glsl); 1 for a direction with no point, as the environment's.
+vec3 surfaceIrradiance(vec3 normal, vec2 shadow)
 {
     ExposureRef e = ExposureRef(ViewRef(push.view).exposure);
     float y[9];
@@ -482,13 +548,19 @@ vec3 surfaceIrradiance(vec3 normal)
     {
         ambient += e.ambient[i].rgb * y[i];
     }
-    return max(ambient, vec3(0.0)) + e.sunLight * max(dot(normal, e.sunDirection), 0.0) + e.moonLight * max(dot(normal, e.moonDirection), 0.0);
+    return max(ambient, vec3(0.0)) + e.sunLight * (max(dot(normal, e.sunDirection), 0.0) * shadow.x)
+                                   + e.moonLight * (max(dot(normal, e.moonDirection), 0.0) * shadow.y);
+}
+
+vec3 surfaceIrradiance(vec3 normal)
+{
+    return surfaceIrradiance(normal, vec2(1.0));
 }
 
 // A diffuse surface lit: its sRGB colour as albedo, so it reflects albedo / pi of its light.
-vec3 lightSurface(vec3 srgbColor, vec3 normal)
+vec3 lightSurface(vec3 srgbColor, vec3 normal, vec2 shadow)
 {
-    return srgbToLinear(srgbColor) * surfaceIrradiance(normal) * (1.0 / 3.14159265);
+    return srgbToLinear(srgbColor) * surfaceIrradiance(normal, shadow) * (1.0 / 3.14159265);
 }
 
 // A palette entry holds the bind shape, which can scale unevenly, so a normal follows its
@@ -579,6 +651,15 @@ vec4 scenePosition(ViewRef view, Instance instance, vec3 packed)
     const uint rank = (instance.flags >> INSTANCE_RANK_SHIFT) & INSTANCE_RANK_MAX;
     position.z *= 1.0 + float(rank) / 4194304.0;
     return position;
+}
+
+// A shadow view's vertex: placed relative to the camera as scenePosition() does, through the
+// view's camera-relative matrix (GpuShadowView). No rank: depth bias settles shadow ties.
+vec4 shadowPosition(ViewRef view, mat4 viewProjection, Instance instance, vec3 packed)
+{
+    const vec3 offset = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) - view.camera.xyz;
+    const vec3 relative = vec3(dot(instance.rows[0].xyz, packed), dot(instance.rows[1].xyz, packed), dot(instance.rows[2].xyz, packed)) + offset;
+    return viewProjection * vec4(relative, 1.0);
 }
 
 uint pyramidLevelSize(uint pixels, uint level)

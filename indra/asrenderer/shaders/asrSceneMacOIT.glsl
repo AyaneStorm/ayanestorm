@@ -32,6 +32,7 @@ layout(set = 0, binding = 1) uniform sampler samplers[4];
 #if MACOIT_PASS == 2
 #include "asrAtmosphere.glsl" // the air in front of each layer
 #include "asrSceneLighting.glsl"
+#include "asrShadow.glsl"
 #endif
 
 layout(location = 0) in vec2 vary_uv;
@@ -208,6 +209,7 @@ void main()
     const Material material = MaterialsRef(push.materials).items[vary_material];
     vec3 normal = normalize(vary_normal);
     normal = dot(normal, vary_toCamera) < 0.0 ? -normal : normal;
+    const vec2 shadow = sunMoonShadow(-vary_toCamera, normal); // offset along the surface's own normal, before maps
     const vec2 faceDx = dFdx(vary_faceUV);
     const vec2 faceDy = dFdy(vary_faceUV);
     vec4 normalSample = vec4(0.5, 0.5, 1.0, 1.0);
@@ -234,6 +236,7 @@ void main()
     surface.glossiness = material.specular.a * normalSample.a;
     surface.envIntensity = material.envIntensity * specularSample.a;
     surface.emissive = (material.flags & MATERIAL_FLAG_FULLBRIGHT) != 0u ? 1.0 : 0.0; // blended: alpha is cover, never a mask
+    surface.shadow = shadow;
     color.rgb = shadeLegacy(loadAtmosphere(ViewRef(push.view).atmosphere), surface, normalize(vary_toCamera));
     if (ViewRef(push.view).debugView == DEBUG_VIEW_ALPHA_MODE)
     {

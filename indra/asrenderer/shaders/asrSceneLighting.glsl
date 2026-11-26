@@ -24,6 +24,7 @@ struct LegacySurface
     float glossiness;
     float envIntensity;
     float emissive; // 0 lit, 1 its own colour unlit
+    vec2 shadow;    // the sun's and the moon's share reaching it: sunMoonShadow()
 };
 
 // OpenGL's lightFunc table (LLPipeline::createLUTBuffers()), computed in place.
@@ -67,7 +68,7 @@ vec3 shadeLegacy(Atmosphere a, LegacySurface s, vec3 toCamera)
     const bool highlights = debugView != DEBUG_VIEW_NO_HIGHLIGHT;
     const bool environment = debugView != DEBUG_VIEW_NO_ENVIRONMENT;
     const vec3 base = srgbToLinear(s.diffuse.rgb);
-    vec3 color = base * surfaceIrradiance(s.normal) * (1.0 / ATMOSPHERE_PI);
+    vec3 color = base * surfaceIrradiance(s.normal, s.shadow) * (1.0 / ATMOSPHERE_PI);
 
     const vec3 reflected = reflect(-toCamera, s.normal);
     // The environment looking along the reflection: the sky above, the ground's bounce below
@@ -75,8 +76,8 @@ vec3 shadeLegacy(Atmosphere a, LegacySurface s, vec3 toCamera)
     vec3 sharp = reflected.z > 0.0 ? environmentSky(a, reflected) : surfaceIrradiance(reflected) * (1.0 / ATMOSPHERE_PI);
     if (s.glossiness > 0.0 && highlights)
     {
-        color += legacyHighlight(s, toCamera, e.sunDirection, e.sunLight);
-        color += legacyHighlight(s, toCamera, e.moonDirection, e.moonLight);
+        color += legacyHighlight(s, toCamera, e.sunDirection, e.sunLight * s.shadow.x);
+        color += legacyHighlight(s, toCamera, e.moonDirection, e.moonLight * s.shadow.y);
     }
     if (s.glossiness > 0.0 && environment)
     {

@@ -169,6 +169,12 @@ public:
     // The room each list needs if every cluster of every instance is seen.
     uint32_t listCapacity(uint32_t list) const;
     uint64_t visibleCapacity() const; // of all lists together
+    uint64_t shadowListBytes() const; // the shadow lists, then the shadow group entries: see fillView()
+    // World spheres (x, y, z, radius) whose cached static shadow went stale in this update,
+    // and whether everything did (GpuSceneView::shadowDirty).
+    // Copies them to `out` (room for SHADOW_MAX_DIRTY), a single negative radius when
+    // everything is stale, and returns how many.
+    uint32_t copyShadowDirty(float* out) const;
 
     // The room the group list needs if every group of every instance passes.
     uint64_t groupCapacity() const;
@@ -244,6 +250,12 @@ private:
         uint32_t selectedClusters = 0; // selected: what it may add to the selection list
         float hudDepth = 0.f;          // a HUD instance: its centre along the HUD camera's axis
         bool hudSelected = false;      // a HUD instance with an outline or a face tint
+        // The sun's static shadow cache (see shadowDirty()): what this instance is cached as.
+        uint64_t matrixHash = 0;       // its transform, to tell a move from another change
+        uint64_t stateHash = 0;        // everything written, to skip sets that change nothing
+        float cachedSphere[4] = {};    // the world bound its shadow is cached with; radius 0: none
+        uint64_t movedFrame = 0;
+        bool moving = false;           // INSTANCE_MOVING: drawn as moving content until it settles
     };
 
     struct Skeleton
@@ -380,6 +392,11 @@ private:
     void applyTerrain(const TerrainCommand& command);
     void applyGeometry(GeometryCommand& command);
     void applyInstance(const InstanceCommand& command, uint64_t frame);
+    // The static shadow cache: an instance's cached bound goes stale, and moved instances
+    // that have stood still for SHADOW_SETTLE_FRAMES become static again.
+    void staleShadow(const float sphere[4]);
+    void settleMoving(uint64_t frame);
+    void instanceSphere(const GpuInstance& instance, float sphere[4]) const;
     void removeGeometry(uint32_t id, uint64_t frame);
     void removeIfUnused(uint32_t id, uint64_t frame);
     bool upload(uint32_t id, SceneChunks& chunks);
@@ -471,6 +488,9 @@ private:
     uint32_t mSelectedClusters = 0;
     uint32_t mHudSelected = 0; // HUD instances with an outline or a tint
     std::set<uint32_t> mHudInstances; // ids drawn by the HUD pass
+    std::vector<float> mShadowDirty;  // this update's stale world spheres, 4 floats each
+    bool mShadowRebake = false;       // every cached shadow is stale
+    std::unordered_map<uint32_t, GpuInstance> mMovingInstances; // INSTANCE_MOVING set, as last written
     bool mStarted = false;
     bool mPositionsCompacted = false;
     std::chrono::steady_clock::time_point mLastPositionCompaction{};
