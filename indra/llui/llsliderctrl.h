@@ -48,6 +48,7 @@ public:
         Optional<bool>          is_volume_slider;
         // <AS:Chanayane> Forward opt-in Ctrl-drag behavior to the internal slider bar.
         Optional<bool>          ctrl_drag_enabled;
+        Optional<F32>           ctrl_drag_multiplier;
         // </AS:Chanayane>
         Optional<S32>           decimal_digits;
 
@@ -70,6 +71,7 @@ public:
             is_volume_slider("volume"),
             // <AS:Chanayane> Standard controls retain Ctrl-reset by default.
             ctrl_drag_enabled("ctrl_drag_enabled", false),
+            ctrl_drag_multiplier("ctrl_drag_multiplier", 1.f),
             // </AS:Chanayane>
             decimal_digits("decimal_digits", 3),
             text_color("text_color"),

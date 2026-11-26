@@ -40,6 +40,7 @@ public:
 
         // <AS:Chanayane> Allow opt-in controls to use Ctrl as a drag modifier instead of reset.
         Optional<bool> ctrl_drag_enabled;
+        Optional<F32> ctrl_drag_multiplier; // times Ctrl-drag's 1/16 speed: 0.5 gives 1/32
         // </AS:Chanayane>
 
         Optional<LLUIColor> thumb_outline_color,
@@ -93,6 +94,9 @@ private:
     // <AS:Chanayane> Per-control Ctrl-drag behavior; the viewer default remains Ctrl-reset.
     bool            mCtrlDragEnabled;
     S32             mLastDragMousePos;
+    F32             mCtrlDragMultiplier;
+    F32             mDragValue; // unrounded, so steps below the increment add up
+    void            ctrlDragTo(S32 pos, S32 span, MASK mask);
     // </AS:Chanayane>
 
     LLPointer<LLUIImage>    mThumbImage;

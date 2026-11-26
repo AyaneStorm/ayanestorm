@@ -333,8 +333,9 @@
                           top_pad="5"
                           width="215"
                           ctrl_drag_enabled="true"
+                          ctrl_drag_multiplier="0.5"
                           can_edit_text="true"/>
-                  <!-- AS:Chanayane - ctrl_drag_enabled on the sun and moon sliders: Ctrl-drag moves 16 times slower. -->
+                  <!-- AS:Chanayane - ctrl_drag_enabled on the sun and moon sliders: Ctrl-drag moves 32 times slower. -->
                   <text follows="left|top"
                         name="sun_elevation_label"
                         height="10"
@@ -355,6 +356,7 @@
                           top_pad="5"
                           width="215"
                           ctrl_drag_enabled="true"
+                          ctrl_drag_multiplier="0.5"
                           can_edit_text="true"/>
                     <check_box control_name="sunbeacon"
                                width="60"
@@ -482,8 +484,9 @@
                           top_pad="5"
                           width="215"
                           ctrl_drag_enabled="true"
+                          ctrl_drag_multiplier="0.5"
                           can_edit_text="true"/>
-                  <!-- AS:Chanayane - ctrl_drag_enabled on the sun and moon sliders: Ctrl-drag moves 16 times slower. -->
+                  <!-- AS:Chanayane - ctrl_drag_enabled on the sun and moon sliders: Ctrl-drag moves 32 times slower. -->
                   <text follows="left|top"
                         name="moon_elevation_label"
                         height="10"
@@ -504,6 +507,7 @@
                           top_pad="5"
                           width="215"
                           ctrl_drag_enabled="true"
+                          ctrl_drag_multiplier="0.5"
                           can_edit_text="true"/>
                     <check_box control_name="moonbeacon"
                                follows="left|top"

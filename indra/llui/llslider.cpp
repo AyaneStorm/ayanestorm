@@ -44,6 +44,7 @@ LLSlider::Params::Params()
 :   orientation ("orientation", std::string ("horizontal")),
     // <AS:Chanayane> Opt-in Ctrl-drag support for precision editors.
     ctrl_drag_enabled("ctrl_drag_enabled", false),
+    ctrl_drag_multiplier("ctrl_drag_multiplier", 1.f),
     // </AS:Chanayane>
     thumb_outline_color("thumb_outline_color"),
     thumb_center_color("thumb_center_color"),
@@ -64,6 +65,8 @@ LLSlider::LLSlider(const LLSlider::Params& p)
     // <AS:Chanayane> Preserve the standard Ctrl-reset unless explicitly enabled.
     mCtrlDragEnabled(p.ctrl_drag_enabled),
     mLastDragMousePos(0),
+    mCtrlDragMultiplier(llmax(p.ctrl_drag_multiplier(), 0.f)),
+    mDragValue(0.f),
     // </AS:Chanayane>
     mOrientation ((p.orientation() == "horizontal") ? HORIZONTAL : VERTICAL),
     mThumbOutlineColor(p.thumb_outline_color()),
@@ -164,6 +167,19 @@ void LLSlider::setValueAndCommit(F32 value)
 }
 
 
+// <AS:Chanayane> Delta drag for opted-in sliders: full speed, or with Ctrl 1/16 times
+// ctrl_drag_multiplier. The value is kept unrounded during the drag, so slow steps
+// smaller than the increment add up instead of being rounded away each move.
+void LLSlider::ctrlDragTo(S32 pos, S32 span, MASK mask)
+{
+    const F32 speed = (mask & MASK_CONTROL) ? 0.0625f * mCtrlDragMultiplier : 1.f;
+    const S32 delta = pos - mLastDragMousePos;
+    mLastDragMousePos = pos;
+    mDragValue = llclamp(mDragValue + (F32(delta) / llmax(1, span)) * (mMaxValue - mMinValue) * speed, mMinValue, mMaxValue);
+    setValueAndCommit(mDragValue);
+}
+// </AS:Chanayane>
+
 bool LLSlider::handleHover(S32 x, S32 y, MASK mask)
 {
     if( hasMouseCapture() )
@@ -177,12 +193,7 @@ bool LLSlider::handleHover(S32 x, S32 y, MASK mask)
             // <AS:Chanayane> Delta-based opt-in dragging allows slow travel beyond the slider track.
             if (mCtrlDragEnabled)
             {
-                const F32 speed = (mask & MASK_CONTROL) ? 0.0625f : 1.f;
-                const S32 delta = x - mLastDragMousePos;
-                mLastDragMousePos = x;
-                setValueAndCommit(getValueF32() +
-                    (F32(delta) / llmax(1, right_edge - left_edge)) *
-                    (mMaxValue - mMinValue) * speed);
+                ctrlDragTo(x, right_edge - left_edge, mask);
             }
             else
             {
@@ -205,12 +216,7 @@ bool LLSlider::handleHover(S32 x, S32 y, MASK mask)
             // <AS:Chanayane> Match horizontal opt-in precision behavior.
             if (mCtrlDragEnabled)
             {
-                const F32 speed = (mask & MASK_CONTROL) ? 0.0625f : 1.f;
-                const S32 delta = y - mLastDragMousePos;
-                mLastDragMousePos = y;
-                setValueAndCommit(getValueF32() +
-                    (F32(delta) / llmax(1, bottom_edge - top_edge)) *
-                    (mMaxValue - mMinValue) * speed);
+                ctrlDragTo(y, bottom_edge - top_edge, mask);
             }
             else
             {
@@ -313,6 +319,7 @@ bool LLSlider::handleMouseDown(S32 x, S32 y, MASK mask)
         mDragStartThumbRect = mThumbRect;
         // <AS:Chanayane> Seed delta-based precision dragging at the press position.
         mLastDragMousePos = (mOrientation == HORIZONTAL) ? x : y;
+        mDragValue = getValueF32();
         // </AS:Chanayane>
     }
     make_ui_sound("UISndClick");

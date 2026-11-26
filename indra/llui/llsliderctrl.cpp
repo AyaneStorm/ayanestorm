@@ -119,6 +119,7 @@ LLSliderCtrl::LLSliderCtrl(const LLSliderCtrl::Params& p)
     LLSlider::Params slider_p(p.slider_bar);
     // <AS:Chanayane> Enable Ctrl-modified dragging only for controls that request it.
     slider_p.ctrl_drag_enabled(p.ctrl_drag_enabled);
+    slider_p.ctrl_drag_multiplier(p.ctrl_drag_multiplier);
     // </AS:Chanayane>
     slider_p.name("slider_bar");
     if (!slider_p.rect.isProvided())
