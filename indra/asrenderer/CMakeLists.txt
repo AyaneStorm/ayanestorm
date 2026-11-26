@@ -120,9 +120,9 @@ foreach(shader asrSceneSkinC asrSceneCullC)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneSkinDemand.glsl)
 endforeach()
-# The sky's tables, the resolve and Mac OIT's colour pass share the atmosphere functions.
+# The sky's tables, the resolve and Mac OIT's passes (through asrSceneMacOIT.glsl) share the atmosphere functions.
 foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
-        asrSceneResolveC asrSceneMacOITColorF asrSkyStarsV asrSkyStarsF)
+        asrSceneResolveC asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSkyStarsV asrSkyStarsF)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrAtmosphere.glsl)
 endforeach()
