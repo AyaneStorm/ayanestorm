@@ -39,7 +39,8 @@ void main()
     // OpenGL's twinkle: fract(x + y) of the star's position on its dome, scaled by a phase
     // that jumps every frame.
     const float twinkle = mix(1.0, fract((star.direction.x + star.direction.y) * ref.starRotation[0].w), ref.moonHalo.w);
-    // Against the exposure: the lit image is pre-exposed, so the level goes in as it is.
+    // Against the exposure: the lit image is pre-exposed, so the level goes in as it is. The
+    // sky behind fades it in the fragment shader (the sky tables are not bound here).
     const float level = ref.moonHalo.z * star.color.w * twinkle;
     const bool hidden = level <= 0.0
                      || raySphereIntersectNearest(atmosphereCamera(a), direction, a.bottomRadius) >= 0.0

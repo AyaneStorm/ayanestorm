@@ -1052,6 +1052,7 @@ private:
         [draw setVertexBuffer:mArguments[mRecordSlot] offset:0 atIndex:0]; // the clouds that hide the stars
         [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         [draw setFragmentTexture:mSky.transmittance atIndex:15];
+        [draw setFragmentTexture:mSky.skyView atIndex:17]; // the sky behind each star fades it
         setOverlayPush(draw, mScenePush);
         [draw drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6 instanceCount:mSky.starCount];
         [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];

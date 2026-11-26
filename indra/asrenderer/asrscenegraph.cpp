@@ -141,7 +141,8 @@ void declareSceneGraph(FrameGraph& graph)
     // The stars, added to the lit image where the depth is still the far plane, before the
     // blended layers go over it.
     graph.addPass("stars", { { ResultTransmittanceLut, FragmentRead },
-                             { ResultExposure, VertexRead },
+                             { ResultSkyViewLut, FragmentRead }, // the sky behind each star fades it
+                             { ResultExposure, VertexRead | FragmentRead },
                              { ResultDepth, DepthTarget | Keep },
                              { ResultLit, ColorTarget | Keep },
                              { ResultTextureFeedback, FragmentWrite | Keep } });

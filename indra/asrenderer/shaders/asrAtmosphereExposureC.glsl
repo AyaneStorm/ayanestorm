@@ -30,6 +30,8 @@ void main()
     const uint thread = gl_LocalInvocationID.x;
     ViewRef view = ViewRef(push.view);
     const Atmosphere a = loadAtmosphere(view.atmosphere);
+    // The twilight arch's source, the same in every thread (see twilightBand()).
+    const vec3 band = twilightBand(a);
 
     // Per cell of the grid, a cosine-weighted direction over the upper hemisphere (the
     // irradiance is then pi times the mean radiance) and a uniform one (the sky's mean).
@@ -41,10 +43,12 @@ void main()
         const vec2 u = (vec2(cell % 32u, cell / 32u) + 0.5) / 32.0;
         const float phi = 2.0 * ATMOSPHERE_PI * u.y;
         const float r = sqrt(u.x);
-        cosineSum += skyRadiance(a, vec3(r * cos(phi), r * sin(phi), sqrt(max(1.0 - u.x, 0.0))));
+        const vec3 cosine = vec3(r * cos(phi), r * sin(phi), sqrt(max(1.0 - u.x, 0.0)));
+        cosineSum += skyRadiance(a, cosine) + twilightArch(a, band, cosine);
         const float z = u.x;
         const float side = sqrt(max(1.0 - z * z, 0.0));
-        uniformSum += skyRadiance(a, vec3(side * cos(phi), side * sin(phi), z));
+        const vec3 uniform_ = vec3(side * cos(phi), side * sin(phi), z);
+        uniformSum += skyRadiance(a, uniform_) + twilightArch(a, band, uniform_);
     }
     sharedSums[thread] = vec4(cosineSum, dot(uniformSum, LUMINANCE));
     barrier();
@@ -97,5 +101,6 @@ void main()
     // The guard only lowers.
     result.exposure = min(adapted, SKY_KEY / max(skyMean, 1e-9));
     result.illuminance = illuminance;
+    result.twilightBand = band;
     result.skyIrradiance = skyIrradiance;
 }

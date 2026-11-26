@@ -278,7 +278,7 @@ vec3 milkyWay(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 // radians. The stars are the viewer's catalogue (ASStars), drawn by their own pass.
 vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 {
-    vec3 luminance = skyRadiance(a, direction);
+    vec3 luminance = skyRadiance(a, direction) + twilightArch(a, ExposureRef(ViewRef(push.view).exposure).twilightBand, direction);
     const vec3 position = atmosphereCamera(a);
     if (raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0)
     {

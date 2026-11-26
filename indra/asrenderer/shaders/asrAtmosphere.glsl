@@ -456,30 +456,104 @@ float eepGlow(vec2 glow, float cosTheta)
 }
 
 // The night sky's own faint light, airglow and starlight, in the sky's units (user: a night
-// is never fully black). Zenith radiance, tinted towards blue as the dark-adapted eye sees
-// it (luminance 1). The airglow layer is seen through more of its depth towards the horizon
-// (van Rhijn), about 3 times the zenith's there once its extinction is folded in.
+// is never fully black). Zenith radiance, neutral: the composite's rod vision gives night its
+// blue. The airglow layer is seen through more of its depth towards the horizon (van Rhijn),
+// about 3 times the zenith's there once its extinction is folded in; the planet hides it below.
 const float AIRGLOW_RADIANCE = 2.5e-9;
-const vec3 AIRGLOW_COLOR = vec3(0.5, 0.75, 1.4) / 0.7436;
 
 vec3 airglow(vec3 direction)
 {
-    const float z = max(direction.z, 0.0);
-    return AIRGLOW_COLOR * (AIRGLOW_RADIANCE * inversesqrt(1.0 - 0.9 * (1.0 - z * z)));
+    if (direction.z < 0.0)
+    {
+        return vec3(0.0);
+    }
+    const float z = direction.z;
+    return vec3(AIRGLOW_RADIANCE * inversesqrt(1.0 - 0.9 * (1.0 - z * z)));
 }
 
-// The sky seen from the camera in a world direction, sun and moon at their own brightness,
-// over the airglow. The sun's Mie single scattering takes its phase here, per pixel, so its
-// peak is as sharp as the screen and not the table, times this EEP's glow against the
+// The sky seen from the camera in a world direction: the sun's light (sunSkyRadiance), the
+// moon's, and the airglow. The sun's Mie single scattering takes its phase here, per pixel, so
+// its peak is as sharp as the screen and not the table, times this EEP's glow against the
 // default EEP's.
-vec3 skyRadiance(Atmosphere a, vec3 direction)
+vec3 sunSkyRadiance(Atmosphere a, vec3 direction)
 {
     const float sunCos = dot(direction, a.sunDirection);
     const float glow = eepGlow(a.sunGlow, sunCos) / eepGlow(vec2(5.0, -0.48), sunCos);
     const vec3 sun = sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN)
                      + sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN_MIE) * (miePhase(a.mieG, -sunCos) * glow);
-    return sun * a.sunIlluminance + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight
+    return sun * a.sunIlluminance;
+}
+
+vec3 skyRadiance(Atmosphere a, vec3 direction)
+{
+    return sunSkyRadiance(a, direction) + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight
          + airglow(direction);
+}
+
+// The twilight arch (user, 26 November 2026: in real life there is no thin bright band on the
+// horizon once the sun has set, but a broad glow rising softly from it). The sky model leaves
+// the air above the sunlit band nearly dark: Hillaire's multiple scattering gives each point
+// its own sun only, so the light the bright horizon scatters up into the shadowed sky is
+// missing, and the band showed as a hard stripe hundreds of times brighter than the sky above
+// (asrenderer_test --look-sun, sun -11.4; about 10 to 30 times in real twilight). The arch
+// puts that light back at the band's brightness, the band's muted colour low down, pink,
+// violet, then indigo, falling off with height and away from the sun's side, coming in as the
+// sun sets.
+// As real deep twilights show (user's photos): indigo and deep blue above, a broad violet then
+// pink belt low down, and only the last degree or two the band's own warm glow, a few times
+// the sky above; no blazing stripe. Colours of luminance 1.
+const float ARCH_STRENGTH = 1.0;              // at the horizon under the sun, against the band
+const float ARCH_HEIGHT = radians(20.0);      // the arch's fall-off with elevation
+const float ARCH_SKY = 0.15;                  // the whole sky, against the band
+const vec3 ARCH_PINK = vec3(1.0, 0.5, 0.6) / 0.6135;
+const vec3 ARCH_VIOLET = vec3(0.55, 0.35, 0.9) / 0.432;
+const vec3 ARCH_INDIGO = vec3(0.18, 0.25, 1.0) / 0.289;
+
+vec2 underSun(Atmosphere a)
+{
+    const vec2 flat_ = a.sunDirection.xy;
+    return dot(flat_, flat_) > 1e-8 ? normalize(flat_) : vec2(1.0, 0.0);
+}
+
+// The arch's source, once per frame (the exposure pass, then GpuExposure::twilightBand): the
+// sky one degree above the horizon under the sun, its Mie peak capped at 6 degrees from the
+// sun so a sun near the horizon does not flare it, weighted in from sun +10 to -4 degrees
+// (from +2 the low sun's sky turned dull grey in one step).
+vec3 twilightBand(Atmosphere a)
+{
+    const float weight = 1.0 - smoothstep(sin(radians(-4.0)), sin(radians(10.0)), a.sunDirection.z);
+    if (weight <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    const float up = radians(1.0);
+    const vec3 direction = vec3(underSun(a) * cos(up), sin(up));
+    // The haze's forward glow round a risen sun is the sun's own, not light the arch carries.
+    const float set = 1.0 - smoothstep(sin(radians(-4.0)), 0.0, a.sunDirection.z);
+    const float sunCos = min(dot(direction, a.sunDirection), cos(radians(6.0)));
+    const vec3 sun = sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN)
+                     + sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN_MIE) * (miePhase(a.mieG, -sunCos) * set);
+    return sun * a.sunIlluminance * weight;
+}
+
+// The arch's light in a world direction, from the frame's band.
+vec3 twilightArch(Atmosphere a, vec3 band, vec3 direction)
+{
+    if (direction.z < 0.0 || band.r + band.g + band.b <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    const float height = asin(clamp(direction.z, 0.0, 1.0));
+    const vec2 flat_ = direction.xy;
+    const float towards = dot(flat_, flat_) > 1e-8 ? dot(normalize(flat_), underSun(a)) : 0.0;
+    const float side = 0.5 + 0.5 * towards;
+    const float shape = ARCH_STRENGTH * exp(-height / ARCH_HEIGHT) * (0.3 + 0.7 * side * side) + ARCH_SKY;
+    const float bandLuminance = dot(band, vec3(0.2126, 0.7152, 0.0722));
+    const vec3 glow = mix(band / max(bandLuminance, 1e-20), ARCH_PINK, 0.4); // the band, muted
+    vec3 colour = mix(glow, ARCH_PINK, smoothstep(radians(0.5), radians(3.0), height));
+    colour = mix(colour, ARCH_VIOLET, smoothstep(radians(3.0), radians(12.0), height));
+    colour = mix(colour, ARCH_INDIGO, smoothstep(radians(10.0), radians(35.0), height));
+    return colour * (bandLuminance * shape);
 }
 
 struct Medium

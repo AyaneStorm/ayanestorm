@@ -11,8 +11,11 @@
  *                   [--sky NAME]         test sky: earth, noon, sunset, night, high, haze or fog
  *                   [--sky-view]         look across the city to the horizon, half sky
  *                   [--look-moon]        a still camera zoomed on the moon
+ *                   [--look-sun]         a still camera on the horizon under the sun
  *                   [--screenshot FILE [SECONDS]] the presented frame as a PNG, at 3 s by default
  *                   [--sun-elevation DEG] after --sky: its sun at this elevation
+ *                   [--sunrise FROM TO STEP DIR] after --sky: one run, the sun from FROM to TO
+ *                                        degrees, DIR/sun+N.N.png every STEP (no resize)
  *                   [--moon-elevation DEG] after --sky: its moon at this elevation
  *                   [--adaptation K]     ASRendererExposureAdaptation
  *                   [--exposure K]       RenderExposure, to lift a faint sky into view
@@ -101,6 +104,7 @@ bool sOverlays = false; // --overlay
 asr::SkyInput sSky = asr::earthSky(); // --sky
 bool sSkyView = false; // --sky-view
 bool sLookMoon = false; // --look-moon
+bool sLookSun = false;  // --look-sun: level, towards the sun's azimuth
 std::string sMoonMaps;  // --moon-maps DIR
 asr::ToneInput sTone;   // the sky's, as the viewer sets it (--sky starley)
 bool sLookHorizon = false; // --look-horizon: a wide view towards the moon
@@ -113,6 +117,21 @@ std::vector<uint8_t> readFile(const std::string& path); // below
 std::string sScreenshot;        // --screenshot FILE [SECONDS]: the presented frame as a PNG
 double sScreenshotAt = 3.0;     // seconds after the scene starts: the camera moves with time
 bool sScreenshotWanted = false; // set when that time comes, cleared once saved
+// --sunrise FROM TO STEP DIR: one run, the sun from FROM to TO degrees, a screenshot every STEP
+float sSunriseFrom = 0.f, sSunriseTo = 0.f, sSunriseStep = 0.f, sSunriseNow = 0.f;
+std::string sSunriseDir;
+bool sScreenshotRun = false; // --screenshot or --sunrise: one window size throughout
+Clock::time_point sSunriseMoved; // when --sunrise last moved the sun
+
+// The test sky's sun at this elevation in degrees, same azimuth.
+void setSunElevation(float degrees)
+{
+    const float elevation = degrees * 3.14159265f / 180.f;
+    const float azimuth = std::atan2(sSky.sunDirection[1], sSky.sunDirection[0]);
+    sSky.sunDirection[0] = std::cos(elevation) * std::cos(azimuth);
+    sSky.sunDirection[1] = std::cos(elevation) * std::sin(azimuth);
+    sSky.sunDirection[2] = std::sin(elevation);
+}
 
 // A PNG with no compression (stored deflate blocks): no image library in the test, and
 // these are read once and deleted. RGB, rows top first, as FrameCapture gives them.
@@ -3110,7 +3129,18 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         asr::FrameState& state = renderThread.state();
         window.pixelSize(state.width, state.height);
         state.testTriangle = !drawScene;
-        if (!sScreenshot.empty() && secondsSince(sceneStart) >= sScreenshotAt)
+        // --sunrise: the next elevation, captured on the frame that first shows it.
+        if (sSunriseStep > 0.f && !sScreenshotWanted && sScreenshot.empty() && sSunriseNow <= sSunriseTo + 1e-3f)
+        {
+            setSunElevation(sSunriseNow);
+            char name[64];
+            snprintf(name, sizeof(name), "/sun%+05.1f.png", sSunriseNow);
+            sScreenshot = sSunriseDir + name;
+            sSunriseNow += sSunriseStep;
+            sSunriseMoved = Clock::now(); // frames already in flight still show the last elevation
+        }
+        const bool settling = sSunriseStep > 0.f && secondsSince(sSunriseMoved) < 0.3;
+        if (!settling && !sScreenshot.empty() && secondsSince(sceneStart) >= sScreenshotAt)
         {
             sScreenshotWanted = true;
         }
@@ -3166,6 +3196,16 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             city->lookDirection[1] = m[0] * s + m[1] * c;
             city->lookDirection[2] = m[2];
             city->lookFov = 1.2f; // radians, about the viewer's default
+        }
+        else if (sLookSun)
+        {
+            // Level, under the sun's azimuth: the twilight's side of the horizon.
+            const float* d = sSky.sunDirection;
+            const float flat = std::max(std::sqrt(d[0] * d[0] + d[1] * d[1]), 1e-6f);
+            city->lookDirection[0] = d[0] / flat;
+            city->lookDirection[1] = d[1] / flat;
+            city->lookDirection[2] = 0.15f; // the horizon a little below the middle
+            city->lookFov = 1.2f;
         }
         if (!sMoonMaps.empty() && !loadMoonMaps(device->textures(), sMoonMaps, sSky))
         {
@@ -3261,6 +3301,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
                 printf("%s  screenshot %s (%u x %u)\n", saved ? "ok  " : "FAIL", sScreenshot.c_str(), shot.width, shot.height);
                 sScreenshot.clear(); // once
             }
+            else if (!sScreenshotWanted)
+            {
+                renderThread.takeCapture(shot); // frames in flight captured too: not this picture
+            }
             buildUI();
             if (city)
             {
@@ -3305,8 +3349,9 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         expect(stalled.worstFrameSeconds < 0.1, "no frame took 100 ms during the stall");
     }
 
-    // Proves resizing while drawing. A speed reading passes --keep-size, so it stays at one size.
-    if (!keepSize)
+    // Proves resizing while drawing. A speed reading passes --keep-size, so it stays at one size,
+    // as screenshot runs do.
+    if (!keepSize && !sScreenshotRun)
     {
         window.resize(900, 600);
     }
@@ -3348,7 +3393,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         printf("moved %u objects, replaced %u geometries\n", city->moved(), city->replaced());
         printf("texture feedback: %u windows, at most %zu textures seen at once, sharpest level %u\n", feedbackWindows, mostSlotsSeen, highestLevel);
         expect(feedbackWindows > 0, "texture feedback comes back");
-        expect(groundSeen, "the ground's texture is seen");
+        if (city->lookFov == 0.f) // a still sky camera may not see it
+        {
+            expect(groundSeen, "the ground's texture is seen");
+        }
         expect(highestLevel <= asr::FEEDBACK_MAX_LEVEL, "feedback levels stay in range");
         expect(stats.earlyClusters > 0, "the camera sees part of the scene");
         expect(stats.pendingGeometries == 0, "all geometry reached the GPU");
@@ -3482,6 +3530,10 @@ int main(int argc, char** argv)
             sLookMoon = true;
             drawScene = true;
         }
+        else if (arg == "--look-sun")
+        {
+            sLookSun = true;
+        }
         else if (arg == "--look-horizon")
         {
             sLookHorizon = true;
@@ -3503,6 +3555,7 @@ int main(int argc, char** argv)
         else if (arg == "--screenshot" && i + 1 < argc)
         {
             sScreenshot = argv[++i];
+            sScreenshotRun = true;
             if (i + 1 < argc && argv[i + 1][0] != '-')
             {
                 sScreenshotAt = atof(argv[++i]);
@@ -3518,12 +3571,16 @@ int main(int argc, char** argv)
         }
         else if (arg == "--sun-elevation" && i + 1 < argc)
         {
-            // After --sky: the same sky with its sun at this elevation, in degrees, same azimuth.
-            const float elevation = std::stof(argv[++i]) * 3.14159265f / 180.f;
-            const float azimuth = std::atan2(sSky.sunDirection[1], sSky.sunDirection[0]);
-            sSky.sunDirection[0] = std::cos(elevation) * std::cos(azimuth);
-            sSky.sunDirection[1] = std::cos(elevation) * std::sin(azimuth);
-            sSky.sunDirection[2] = std::sin(elevation);
+            setSunElevation(std::stof(argv[++i])); // after --sky
+        }
+        else if (arg == "--sunrise" && i + 4 < argc)
+        {
+            sSunriseFrom = std::stof(argv[++i]);
+            sSunriseTo = std::stof(argv[++i]);
+            sSunriseStep = std::fabs(std::stof(argv[++i]));
+            sSunriseDir = argv[++i];
+            sSunriseNow = sSunriseFrom;
+            sScreenshotRun = true;
         }
         else if (arg == "--moon-elevation" && i + 1 < argc)
         {

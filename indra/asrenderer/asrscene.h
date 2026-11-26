@@ -729,6 +729,8 @@ struct GpuExposure
     float pad[2];
     float skyIrradiance[3]; // the sky alone on that surface, rgb, in the sun's units: the clouds' ambient
     float pad2;
+    float twilightBand[3];  // the sky low under the sun once it has set, rgb: the twilight arch's source
+    float pad3;
 };
 // Where outlines meet, the mask keeps the higher one, so the order is OpenGL's precedence.
 constexpr uint32_t SELECTION_COLOR_FACE = 0;            // the face tool's tint, not an outline

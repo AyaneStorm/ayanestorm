@@ -38,5 +38,14 @@ void main()
         image.rgb = srgbToLinear(image.rgb);
     }
     const vec3 air = sampleTransmittance(a, length(atmosphereCamera(a)), vary_direction.z);
-    frag_color = vec4(min(image.rgb * image.a * vary_light * air, vec3(60000.0)), 0.0);
+    // Stars are lost in the sunlit sky behind them as the eye loses them at dawn (user: stars
+    // over a sky already lit by the sun), from STARS_LOST_FROM to STARS_LOST_BY cd/m2, between
+    // nautical and civil twilight, so any EEP's stars leave by day. The sun's light only: the
+    // EEP moon is far brighter than a real one and would drown every moonlit night's stars.
+    const float STARS_LOST_FROM = 0.02, STARS_LOST_BY = 2.0;
+    const float SKY_CANDELAS = 120000.0; // a radiance of 1 in the sky's units, in cd/m2
+    const vec3 behind = sunSkyRadiance(a, vary_direction) + twilightArch(a, ExposureRef(view.exposure).twilightBand, vary_direction);
+    const float candelas = max(dot(behind, vec3(0.2126, 0.7152, 0.0722)) * SKY_CANDELAS, 1e-9);
+    const float shown = 1.0 - smoothstep(log(STARS_LOST_FROM), log(STARS_LOST_BY), log(candelas));
+    frag_color = vec4(min(image.rgb * image.a * vary_light * air * shown, vec3(60000.0)), 0.0);
 }
