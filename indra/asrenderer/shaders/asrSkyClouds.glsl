@@ -108,32 +108,14 @@ float henyeyGreenstein(float g, float cosTheta)
 // strong one forward, the silver lining towards the light, and a weak one back. A sheet is
 // lit, not filled, so the phase is taken four times: an even phase then gives a Lambert
 // surface's 1 / pi.
-// The share of a light's disc (angular radius `radius`) above the horizon seen from `point`:
-// the planet's shadow fades over the disc's width as it sets for that point, instead of
-// cutting the light at its centre, which drew a hard dark band up the clouds at sunset.
-float lightAboveHorizon(Atmosphere a, vec3 point, vec3 light, float radius)
-{
-    const float r = length(point);
-    const float sinHorizon = -sqrt(max(1.0 - (a.bottomRadius / r) * (a.bottomRadius / r), 0.0));
-    const float elevation = asin(clamp(dot(light, point / r), -1.0, 1.0)) - asin(sinHorizon);
-    // The part of a disc above a line x radii from its centre: a circular segment.
-    const float x = clamp(elevation / max(radius, 1e-4), -1.0, 1.0);
-    return 0.5 + (x * sqrt(1.0 - x * x) + asin(x)) / ATMOSPHERE_PI;
-}
-
+// The planet's shadow fades over the light's disc as it sets for that point
+// (lightAboveHorizon), instead of cutting the light at its centre, which drew a hard dark
+// band up the clouds at sunset.
 vec3 cloudLightFrom(Atmosphere a, vec3 point, vec3 light, float radius, vec3 direction)
 {
-    const float visible = lightAboveHorizon(a, point, light, radius);
-    if (visible <= 0.0)
-    {
-        return vec3(0.0);
-    }
-    const float r = length(point);
     const float c = dot(direction, light);
     const float phase = mix(henyeyGreenstein(-0.3, c), henyeyGreenstein(0.8, c), 0.7);
-    // The part still visible takes the horizon's light once the centre has set.
-    const float sinHorizon = -sqrt(max(1.0 - (a.bottomRadius / r) * (a.bottomRadius / r), 0.0));
-    return sampleTransmittance(a, r, max(dot(light, point / r), sinHorizon + 1e-4)) * (4.0 * phase * visible);
+    return lightThroughAir(a, point, light, radius) * (4.0 * phase);
 }
 
 // The cloud laid over `behind` (the sky with what lies beyond the air) seen from the camera.

@@ -2,8 +2,8 @@
  * asrAtmosphereExposureC.glsl
  * The frame's exposure, from its sky, as an incident light meter reads it: the light falling
  * on a horizontal surface at the camera, from the sky over the whole upper hemisphere and
- * from the sun after the air. A white surface lit by all of it comes out at 1 before tone
- * mapping. A guard then measures the sky itself, its mean luminance over the upper
+ * from the sun after the air, as a dome meter takes it. A white surface lit by all of it
+ * comes out at 1 before tone mapping. A guard then measures the sky itself, its mean luminance over the upper
  * hemisphere, and lowers the exposure so that mean stays at SKY_KEY or below: at sunset the
  * card gets little light while the sky stays bright, and the sky keeps its colour where an
  * incident meter alone blows it out. No history and nothing measured on screen, so every view
@@ -68,16 +68,27 @@ void main()
     const float skyIlluminance = dot(skyIrradiance, LUMINANCE);
     const float skyMean = sharedSums[0].a / float(64u * SAMPLES_PER_THREAD);
     const vec3 position = atmosphereCamera(a);
-    float sunIlluminance = 0.0;
-    if (a.sunDirection.z > 0.0 && raySphereIntersectNearest(position, a.sunDirection, a.bottomRadius) < 0.0)
-    {
-        const vec3 transmittance = sampleTransmittance(a, length(position), a.sunDirection.z);
-        sunIlluminance = dot(a.sunIlluminance * transmittance, LUMINANCE) * a.sunDirection.z;
-    }
+    // The sun sets over its disc's width (the EEP sun scale: about 3 degrees either side of
+    // the horizon at scale 1), not at its centre, which switched the light off between
+    // elevation 0 and -0.01.
+    const vec3 transmittance = lightThroughAir(a, position, a.sunDirection, acos(a.sunCosRadius));
+    // A dome meter's response, as photographers meter 3D subjects: (1 + sin elevation) / 2,
+    // the dome's projected area towards the sun. A flat card's sin(elevation) raised the
+    // exposure so much at low sun that the sun, its bloom and whatever faces it peaked
+    // near 9 degrees; at noon the two read alike. The sky stays read by the card.
+    const float sunIlluminance = dot(a.sunIlluminance * transmittance, LUMINANCE) * max(0.5 + 0.5 * a.sunDirection.z, 0.0);
     const float illuminance = max(skyIlluminance + sunIlluminance, ILLUMINANCE_FLOOR);
     ExposureRef result = ExposureRef(view.exposure);
+    // Partial adaptation, as the eye's: against the sun's own illuminance above the air (a
+    // noon of this EEP), the exposure follows the light by exposureAdaptation only, so a low
+    // sun, dusk and night stay dimmer than noon. Fully adapted, the sun on screen came out
+    // about 1 / the meter's reading, brighter the lower it was until the air won near 2.5
+    // degrees.
+    const float noon = max(dot(a.sunIlluminance, LUMINANCE), ILLUMINANCE_FLOOR);
+    const float adaptation = clamp(view.exposureAdaptation, 0.0, 1.0);
+    const float adapted = ATMOSPHERE_PI / illuminance * pow(illuminance / noon, 1.0 - adaptation);
     // The guard only lowers: at night the floor above still decides.
-    result.exposure = min(ATMOSPHERE_PI / illuminance, SKY_KEY / max(skyMean, 1e-9));
+    result.exposure = min(adapted, SKY_KEY / max(skyMean, 1e-9));
     result.illuminance = illuminance;
     result.skyIrradiance = skyIrradiance;
 }

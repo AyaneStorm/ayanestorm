@@ -330,6 +330,34 @@ vec3 sampleTransmittance(Atmosphere a, float viewHeight, float viewZenithCos)
     return textureLod(sampler2D(transmittanceLut, samplers[0]), transmittanceParamsToUv(a, viewHeight, viewZenithCos), 0.0).rgb;
 }
 
+// The share of a light's disc (angular radius `radius`) above the horizon seen from `point`:
+// lights set over their disc's width, from one radius above the horizon to one below (about
+// +3 to -3 degrees at sun scale 1, as the user wanted). Cutting at the centre switched the
+// light off between 0 and -0.01.
+float lightAboveHorizon(Atmosphere a, vec3 point, vec3 light, float radius)
+{
+    const float r = length(point);
+    const float sinHorizon = -sqrt(max(1.0 - (a.bottomRadius / r) * (a.bottomRadius / r), 0.0));
+    const float elevation = asin(clamp(dot(light, point / r), -1.0, 1.0)) - asin(sinHorizon);
+    // The part of a disc above a line x radii from its centre: a circular segment.
+    const float x = clamp(elevation / max(radius, 1e-4), -1.0, 1.0);
+    return 0.5 + (x * sqrt(1.0 - x * x) + asin(x)) / ATMOSPHERE_PI;
+}
+
+// A light's transmittance from the top of the air to `point`, times the share of its disc
+// above that point's horizon; once the centre has set, the visible part takes the horizon's.
+vec3 lightThroughAir(Atmosphere a, vec3 point, vec3 light, float radius)
+{
+    const float visible = lightAboveHorizon(a, point, light, radius);
+    if (visible <= 0.0)
+    {
+        return vec3(0.0);
+    }
+    const float r = length(point);
+    const float sinHorizon = -sqrt(max(1.0 - (a.bottomRadius / r) * (a.bottomRadius / r), 0.0));
+    return sampleTransmittance(a, r, max(dot(light, point / r), sinHorizon + 1e-4)) * visible;
+}
+
 vec3 sampleMultiscatter(Atmosphere a, vec3 position, float sunZenithCos)
 {
     vec2 uv = clamp(vec2(sunZenithCos * 0.5 + 0.5, (length(position) - a.bottomRadius) / (a.topRadius - a.bottomRadius)), 0.0, 1.0);
