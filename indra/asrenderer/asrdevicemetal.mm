@@ -1871,6 +1871,27 @@ private:
         view.atmosphere = addressOf(mSceneViews[slot]) + sizeof(GpuSceneView);
         view.exposure = addressOf(mSky.exposure);
         view.resolveTiles = addressOf(mResolveTiles);
+        // A word per instance, kept between frames; a larger table starts unknown.
+        const uint64_t lodBytes = std::max<uint64_t>(view.instanceEnd, 1) * sizeof(uint32_t);
+        if (!mInstanceLods || lodBytes > mInstanceLods.length)
+        {
+            if (mInstanceLods)
+            {
+                mRetiredBuffers.push_back({ mInstanceLods, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::Geometry });
+            }
+            uint64_t capacity = 4096 * sizeof(uint32_t);
+            while (capacity < lodBytes)
+            {
+                capacity *= 2;
+            }
+            mInstanceLods = createSceneBuffer(capacity, MemoryCategory::Geometry, "instance LODs", true);
+            if (!mInstanceLods)
+            {
+                return false;
+            }
+            mLodReset = true;
+        }
+        view.instanceLods = addressOf(mInstanceLods);
         fillShadowView(view, mShadowCascades, mShadowSize, addressOf(mShadowViews), addressOf(mShadowLists));
         view.shadowLightStep = mShadowLightStep;
         view.shadowDirtyCount = mSceneStore.copyShadowDirty(static_cast<float*>(mShadowDirty[slot].contents));
@@ -1926,6 +1947,14 @@ private:
         {
             [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, shadowGroups)
                                    threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        }
+        else if (phase == CULL_LOD)
+        {
+            if (mSceneInstanceEnd != 0)
+            {
+                [cull dispatchThreadgroups:MTLSizeMake((mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1)
+                     threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+            }
         }
         else if (phase >= CULL_GROUPS_EARLY)
         {
@@ -2215,6 +2244,20 @@ private:
             });
         }
         mGraph.setBody(PassShadowFit, [this]() { return passShadowFit(); });
+        mGraph.setBody(PassLodSelect, [this]()
+        {
+            if (mLodReset)
+            {
+                // A new table knows no instance's LOD: each is taken as changed once.
+                id<MTLBlitCommandEncoder> clear = [mRecordCommands blitCommandEncoder];
+                [clear waitForFence:mSceneFence];
+                [clear fillBuffer:mInstanceLods range:NSMakeRange(0, mInstanceLods.length) value:0xFF];
+                [clear updateFence:mSceneFence];
+                [clear endEncoding];
+                mLodReset = false;
+            }
+            return passCull(CULL_LOD);
+        });
         mGraph.setBody(PassShadowGroups, [this]() { return passCull(CULL_GROUPS_SHADOW); });
         mGraph.setBody(PassShadowShift, [this]() { return passShadowShift(); });
         mGraph.setBody(PassShadowDraw, [this]() { return passShadowDraw(SHADOW_DRAW_STATIC); });
@@ -3365,6 +3408,8 @@ private:
     id<MTLBuffer> mResolveTiles = nil; // GpuResolveTiles, sized with the scene
     // Sun and moon shadows: see asrscene.h and the Vulkan device's members of the same names.
     id<MTLBuffer> mShadowLists = nil;
+    id<MTLBuffer> mInstanceLods = nil; // GpuSceneView::instanceLods
+    bool mLodReset = true;
     id<MTLBuffer> mShadowViews = nil;
     id<MTLBuffer> mShadowDirty[FRAMES_IN_FLIGHT] = {};
     id<MTLTexture> mSunShadow = nil;   // the working map, a layer per cascade

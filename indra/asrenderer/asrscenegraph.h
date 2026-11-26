@@ -79,6 +79,7 @@ enum SceneResult : ResultId
     ResultShadowLists,   // the shadow views' clusters, tagged by view, then their group entries
     ResultSunShadow,     // the sun's or moon's cascades, a depth layer each
     ResultShadowCache,   // their static casters alone, kept between frames
+    ResultInstanceLods,  // each instance's LOD, kept to see it change
     ResultCount
 };
 
@@ -92,6 +93,7 @@ enum ScenePass : PassId
     PassSkinClusters,
     PassSkinGroups,
     PassShadowFit,     // the cascades, from last frame's depth
+    PassLodSelect,     // each instance's one LOD, for every view; marks cached shadows it changes
     PassCullEarly,     // the main view and every shadow view
     PassGroupsEarly,
     PassShadowGroups,  // before skinning, so shadow casters ask for it as drawn clusters do

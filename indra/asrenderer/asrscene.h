@@ -169,6 +169,8 @@ constexpr uint32_t CULL_GROUPS_EARLY = 3;
 constexpr uint32_t CULL_GROUPS_LATE = 4;
 constexpr uint32_t CULL_GROUPS_AUDIT = 5;
 constexpr uint32_t CULL_GROUPS_SHADOW = 7; // the shadow views' groups; 6 is MACOIT_GATE
+constexpr uint32_t CULL_LOD = 8;           // first: each instance's one LOD, for every view (selectLod())
+constexpr uint32_t LOD_UNKNOWN = 0xFFFFFFFFu;
 constexpr uint32_t CULL_GROUPS_PER_WORKGROUP = CULL_GROUP_SIZE / CLUSTER_GROUP_SIZE;
 
 // Sun and moon shadows (doc/ayanestorm-new-renderer-shadows.md). The shadow views are one
@@ -827,7 +829,8 @@ struct GpuSceneView
     uint32_t shadowDirtyCount; // spheres at shadowDirty
     uint64_t shadowDirty;     // world spheres (x, y, z, radius) whose cached shadow is stale; a negative radius: all
     float shadowLightStep;    // cosine of ASRendererShadowSunStep: the cache's light moves when the light leaves it
-    float shadowPad[3];
+    uint32_t shadowPad;
+    uint64_t instanceLods;    // a word per instance: the LOD every view draws it with, chosen by CULL_LOD; LOD_UNKNOWN when new
 };
 
 // The resolve runs once per material kind, each over only the tiles holding that kind
@@ -846,6 +849,7 @@ inline uint64_t resolveTilesBytes(uint32_t width, uint32_t height)
 }
 static_assert(sizeof(GpuSceneView) == 1056, "shaders read this layout");
 static_assert(offsetof(GpuSceneView, shadowDirty) % 8 == 0, "std430 aligns a uint64_t to 8");
+static_assert(offsetof(GpuSceneView, instanceLods) % 8 == 0, "std430 aligns a uint64_t to 8");
 static_assert(offsetof(GpuSceneView, shadowViews) % 8 == 0, "std430 aligns a uint64_t to 8");
 // The atmosphere follows the view in its buffer, and its shader struct holds vec4s.
 static_assert(sizeof(GpuSceneView) % 16 == 0, "the atmosphere after the view must stay 16-byte aligned");

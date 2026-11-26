@@ -68,6 +68,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("shadow lists", ResultScope::Frame);
     graph.addResult("sun shadow", ResultScope::Frame);
     graph.addResult("shadow cache", ResultScope::Persistent);
+    graph.addResult("instance lods", ResultScope::Persistent);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -82,8 +83,13 @@ void declareSceneGraph(FrameGraph& graph)
     // The cascades from last frame's farthest depth, before the cull that reads them.
     graph.addPass("shadow fit", { { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                   { ResultShadowViews, ComputeRead | ComputeWrite | Keep } });
+    // Each instance's LOD, read by every cull below; a changed one marks its cached shadow dirty.
+    graph.addPass("lod select", { { ResultSceneData, ComputeRead },
+                                  { ResultShadowViews, ComputeRead | ComputeWrite | Keep },
+                                  { ResultInstanceLods, ComputeRead | ComputeWrite | Keep } });
     // Shadow views are culled in the same threads as the main view: see asrscene.h.
     graph.addPass("cull early", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
+                                  { ResultInstanceLods, ComputeRead },
                                   { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                   { ResultShadowViews, ComputeRead },
                                   { ResultDrawArguments, ComputeWrite | Keep },
@@ -114,6 +120,7 @@ void declareSceneGraph(FrameGraph& graph)
                                   { ResultDepth, DepthTarget } });
     graph.addPass("pyramid early", { { ResultDepth, ComputeRead }, { ResultDepthPyramid, ComputeWrite } });
     graph.addPass("cull late", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
+                                 { ResultInstanceLods, ComputeRead },
                                  { ResultDepthPyramid, ComputeRead },
                                  { ResultRetestList, ComputeRead },
                                  { ResultDrawArguments, Indirect | ComputeWrite | Keep },
@@ -204,6 +211,7 @@ void declareSceneGraph(FrameGraph& graph)
     // goes when its sink is off, so a normal frame pays nothing for it.
     graph.addPass("audit reset", { { ResultDrawArguments, CopyWrite | Keep } });
     graph.addPass("audit cull", { { ResultSceneData, ComputeRead },
+                                  { ResultInstanceLods, ComputeRead },
                                   { ResultDrawArguments, ComputeWrite | Keep },
                                   { ResultVisibleClusters, ComputeWrite | Keep },
                                   { ResultGroupList, ComputeWrite | Keep } });

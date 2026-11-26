@@ -32,6 +32,9 @@ const uint CULL_GROUPS_EARLY = 3u;
 const uint CULL_GROUPS_LATE = 4u;
 const uint CULL_GROUPS_AUDIT = 5u;
 const uint CULL_GROUPS_SHADOW = 7u;
+const uint CULL_LOD = 8u;
+const uint LOD_UNKNOWN = 0xFFFFFFFFu; // a new instance index, or a new LOD table
+layout(buffer_reference, std430) buffer LodsRef { uint items[]; };
 
 const uint WHOLE_INSTANCE = 0xFFFFFFFFu;
 const uint RETEST_GROUP = 0x80000000u;
@@ -544,17 +547,49 @@ void castShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry g
     }
 }
 
-// A static caster's LOD in a shadow view: from the view's texel, as if a screen pixel were
-// that size (a 1080 pixel high, 60 degree view puts a pixel at distance / 935), so the cached
-// shadow does not depend on where the camera is.
-const float SHADOW_LOD_PIXELS = 935.0;
-uint shadowGeometry(ViewRef view, Instance instance, float scaleBound, float texel)
+// The LOD job (CULL_LOD), before every other: one thread per instance chooses the LOD every
+// view draws it with, the main view and the shadows alike, as OpenGL's shadows use what the
+// camera shows. A static instance whose LOD changed has its cached shadow redrawn: its tiles
+// are marked dirty before the early cull and the shift pass read them.
+void selectLod(ViewRef view, uint instanceIndex)
 {
-    return geometryAtDistance(view, instance, scaleBound, texel * SHADOW_LOD_PIXELS);
+    const Instance instance = InstancesRef(push.instances).items[instanceIndex];
+    if (!chosenByView(view, instance))
+    {
+        return;
+    }
+    const float scaleBound = scaleBoundOf(instance);
+    const uint id = chooseGeometry(view, instance, scaleBound);
+    LodsRef lods = LodsRef(view.instanceLods);
+    const uint old = lods.items[instanceIndex];
+    lods.items[instanceIndex] = id;
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    if (old == id || view.shadowCascades == 0u || movingCaster(instance) || shadows.count == 0u)
+    {
+        return;
+    }
+    GeometriesRef geometries = GeometriesRef(push.geometries);
+    float radius = geometries.items[id].radius;
+    radius = old != LOD_UNKNOWN ? max(radius, geometries.items[old].radius) : radius;
+    const vec3 relative = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) - view.camera.xyz;
+    radius *= scaleBound;
+    const float size = view.shadowResolution;
+    const float tile = size / float(SHADOW_TILES);
+    for (uint v = 0u; v < shadows.count; ++v)
+    {
+        const vec2 at = ((shadows.views[v].viewProjection * vec4(relative, 1.0)).xy * 0.5 + 0.5) * size;
+        const float reach = radius / shadows.views[v].lightDirection.w;
+        const uint columns = shadowTileBits(at.x - reach, at.x + reach, tile);
+        const int first = max(int(floor((at.y - reach) / tile)), 0);
+        const int last = min(int(ceil((at.y + reach) / tile)) - 1, int(SHADOW_TILES) - 1);
+        for (int row = first; row <= last && columns != 0u; ++row)
+        {
+            atomicOr(shadows.dirty[v * SHADOW_TILES + uint(row)], columns);
+        }
+    }
 }
 
-// `geometry` is the main view's LOD: a moving caster keeps it, as it is drawn every frame. A
-// static one takes each view's own; views in a row with the same LOD are culled together.
+// `geometry` is the instance's one LOD (selectLod()).
 void cullShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry geometry, float scaleBound)
 {
     if (view.shadowCascades == 0u)
@@ -570,29 +605,7 @@ void cullShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry g
     {
         return;
     }
-    if (moving)
-    {
-        castShadows(view, instance, instanceIndex, geometry, scaleBound, views, true);
-        return;
-    }
-    uint runId = 0u;
-    uint run = 0u;
-    for (uint bits = views; bits != 0u; bits &= bits - 1u)
-    {
-        const uint v = uint(findLSB(bits));
-        const uint id = shadowGeometry(view, instance, scaleBound, shadows.views[v].lightDirection.w);
-        if (run != 0u && id != runId)
-        {
-            castShadows(view, instance, instanceIndex, GeometriesRef(push.geometries).items[runId], scaleBound, run, false);
-            run = 0u;
-        }
-        runId = id;
-        run |= 1u << v;
-    }
-    if (run != 0u)
-    {
-        castShadows(view, instance, instanceIndex, GeometriesRef(push.geometries).items[runId], scaleBound, run, false);
-    }
+    castShadows(view, instance, instanceIndex, geometry, scaleBound, views, moving);
 }
 
 // The shadow groups job: as cullGroupClusters(), each cluster tested against its group's views.
@@ -629,7 +642,7 @@ void cullInstance(ViewRef view, uint instanceIndex)
         return;
     }
     const float scaleBound = scaleBoundOf(instance);
-    const Geometry geometry = GeometriesRef(push.geometries).items[chooseGeometry(view, instance, scaleBound)];
+    const Geometry geometry = GeometriesRef(push.geometries).items[LodsRef(view.instanceLods).items[instanceIndex]]; // selectLod()
     if (geometry.clusterCount == 0u)
     {
         return;
@@ -728,6 +741,14 @@ void main()
     if (push.phase == CULL_GROUPS_SHADOW)
     {
         cullShadowGroupClusters(view);
+        return;
+    }
+    if (push.phase == CULL_LOD)
+    {
+        if (index < view.instanceEnd)
+        {
+            selectLod(view, index);
+        }
         return;
     }
     const bool late = latePhase();

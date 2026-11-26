@@ -4,8 +4,8 @@
  * and Mac OIT shadow alike (doc/ayanestorm-new-renderer-shadows.md). Include after
  * asrSceneCommon.glsl, with set 0's samplers declared.
  *
- * The finest cascade holding the point is read with a 3 by 3 texel tent filter made of four
- * gathers, the hardware's 2 by 2 reads, compared here, so no comparison sampler is needed and
+ * The finest cascade holding the point is read with 2 by 2 bilinear taps a texel apart, made
+ * of four gathers, the hardware's 2 by 2 reads, compared here, so no comparison sampler is needed and
  * PCSS can later read the same depths. The point moves along its normal by a texel and a half
  * of that cascade, and its depth by a texel more, so a lit surface does not shadow itself.
  */
@@ -59,17 +59,18 @@ float asr_shadow_sun(vec3 relative, vec3 normal)
         }
         const float depth = clip.z + SHADOW_DEPTH_BIAS * texel / shadows.views[i].depthRange;
 
-        // Texels t - 1 to t + 2 around the point, weighted 1 - f, 1, 1, f each way: three
-        // bilinear taps a texel apart, summed.
-        const vec2 at = uv * resolution - 0.5;
+        // Two bilinear taps a texel apart each way, summed: texels t to t + 2 weighted 1 - f,
+        // 1, f. Odd and even columns always weigh the same, so OpenGL's half-density dither of
+        // semi-transparent casters (every other column) reads as an even half shadow.
+        const vec2 at = uv * resolution - 1.0;
         const vec2 base = floor(at);
         const vec2 f = at - base;
         const float layer = float(shadows.views[i].layer);
-        float lit = shadowGather(base, layer, depth, vec2(1.0 - f.x, 1.0), vec2(1.0 - f.y, 1.0), resolution)
-                  + shadowGather(base + vec2(2.0, 0.0), layer, depth, vec2(1.0, f.x), vec2(1.0 - f.y, 1.0), resolution)
-                  + shadowGather(base + vec2(0.0, 2.0), layer, depth, vec2(1.0 - f.x, 1.0), vec2(1.0, f.y), resolution)
-                  + shadowGather(base + vec2(2.0, 2.0), layer, depth, vec2(1.0, f.x), vec2(1.0, f.y), resolution);
-        lit *= 1.0 / 9.0;
+        float lit = shadowGather(base + 1.0, layer, depth, vec2(1.0 - f.x, 1.0), vec2(1.0 - f.y, 1.0), resolution)
+                  + shadowGather(base + vec2(3.0, 1.0), layer, depth, vec2(f.x, 0.0), vec2(1.0 - f.y, 1.0), resolution)
+                  + shadowGather(base + vec2(1.0, 3.0), layer, depth, vec2(1.0 - f.x, 1.0), vec2(f.y, 0.0), resolution)
+                  + shadowGather(base + 3.0, layer, depth, vec2(f.x, 0.0), vec2(f.y, 0.0), resolution);
+        lit *= 0.25;
         return mix(lit, 1.0, smoothstep(reach * (1.0 - SHADOW_FADE), reach, distanceToCamera));
     }
     return 1.0;

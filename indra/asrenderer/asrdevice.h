@@ -144,7 +144,7 @@ struct FrameInput
     FrameCapture* capture = nullptr; // set: the presented image is read back; waits for the GPU
 };
 
-constexpr uint32_t MAX_TIMED_PASSES = 48; // every scene pass, audit and feedback included
+constexpr uint32_t MAX_TIMED_PASSES = 64; // every scene pass, audit and feedback included
 
 // One pass of the frame graph. On Vulkan it runs from the end of the last pass to its
 // own end, so barriers count too and the passes add up to the frame's GPU time. On Metal

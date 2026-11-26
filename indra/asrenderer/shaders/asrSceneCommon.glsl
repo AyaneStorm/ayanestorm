@@ -293,6 +293,8 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint shadowDirtyCount;
     uint64_t shadowDirty;    // vec4 spheres: GpuSceneView::shadowDirty
     float shadowLightStep;
+    uint shadowPad;
+    uint64_t instanceLods;   // see selectLod() in asrSceneCullC.glsl
 };
 
 // Shadow views, as GpuShadowViews: the shadow fit pass writes them, the cull, the shadow draw

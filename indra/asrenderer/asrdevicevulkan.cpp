@@ -1702,6 +1702,7 @@ private:
         destroySunShadow();
         destroyBufferObject(mShadowViews, MemoryCategory::Shadows);
         destroyBufferObject(mShadowLists, MemoryCategory::Geometry);
+        destroyBufferObject(mInstanceLods, MemoryCategory::Geometry);
         for (MappedBuffer& spheres : mShadowDirty)
         {
             destroyBuffer(spheres, MemoryCategory::Staging);
@@ -4108,6 +4109,28 @@ private:
         view.atmosphere = viewAddress + sizeof(GpuSceneView);
         view.exposure = mSky.exposure.address;
         view.resolveTiles = mResolveTiles.address;
+        // A word per instance, kept between frames; a larger table starts unknown.
+        const uint64_t lodBytes = std::max<uint64_t>(view.instanceEnd, 1) * sizeof(uint32_t);
+        if (lodBytes > mInstanceLods.size)
+        {
+            if (mInstanceLods.buffer != VK_NULL_HANDLE)
+            {
+                mRetiredBuffers.push_back({ mInstanceLods, mFrame + FRAMES_IN_FLIGHT + 1 });
+                mInstanceLods = GpuBuffer();
+            }
+            uint64_t capacity = 4096 * sizeof(uint32_t);
+            while (capacity < lodBytes)
+            {
+                capacity *= 2;
+            }
+            if (!createBufferObject(mInstanceLods, capacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "instance LODs",
+                                    MemoryCategory::Geometry, true))
+            {
+                return false;
+            }
+            mLodReset = true;
+        }
+        view.instanceLods = mInstanceLods.address;
         fillShadowView(view, mShadowCascades, mSunShadowSize, mShadowViews.address, mShadowLists.address);
         view.shadowLightStep = mShadowLightStep;
         view.shadowDirtyCount = mSceneStore.copyShadowDirty(static_cast<float*>(mShadowDirty[slot].mapped));
@@ -4170,6 +4193,10 @@ private:
         else if (phase == CULL_GROUPS_SHADOW)
         {
             vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, shadowGroups));
+        }
+        else if (phase == CULL_LOD)
+        {
+            vkCmdDispatch(commands, (mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1);
         }
         else if (phase >= CULL_GROUPS_EARLY)
         {
@@ -4437,6 +4464,18 @@ private:
             });
         }
         mGraph.setBody(PassShadowFit, [this]() { return passShadowFit(); });
+        mGraph.setBody(PassLodSelect, [this]()
+        {
+            if (mLodReset)
+            {
+                // A new table knows no instance's LOD: each is taken as changed once.
+                vkCmdFillBuffer(mRecordCommands, mInstanceLods.buffer, 0, VK_WHOLE_SIZE, LOD_UNKNOWN);
+                memoryBarrier(mRecordCommands, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+                mLodReset = false;
+            }
+            return passCull(CULL_LOD);
+        });
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
         mGraph.setBody(PassShadowGroups, [this]() { return passCull(CULL_GROUPS_SHADOW); });
@@ -5067,6 +5106,8 @@ private:
     GpuBuffer mShadowViews;  // GpuShadowViews, written by the shadow fit pass
     TargetImage mSunShadow;  // a depth layer per cascade, mSunShadowSize across
     TargetImage mShadowCache; // the same, static casters alone, kept between frames
+    GpuBuffer mInstanceLods;  // GpuSceneView::instanceLods
+    bool mLodReset = true;
     MappedBuffer mShadowDirty[FRAMES_IN_FLIGHT]; // GpuSceneView::shadowDirty, per slot
     VkPipeline mShadowShiftPipeline = VK_NULL_HANDLE;
     bool mShadowReset = true; // new maps: the views buffer is cleared, so every cascade is redrawn
