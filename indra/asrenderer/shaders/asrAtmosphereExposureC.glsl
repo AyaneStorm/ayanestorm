@@ -79,8 +79,17 @@ void main()
     const float sunIlluminance = dot(a.sunIlluminance * transmittance, LUMINANCE) * max(0.5 + 0.5 * a.sunDirection.z, 0.0);
     const float illuminance = max(skyIlluminance + sunIlluminance, ILLUMINANCE_FLOOR);
     ExposureRef result = ExposureRef(view.exposure);
+    // Partial adaptation, as the eye's: against the sun's own illuminance above the air (a
+    // noon of this EEP), the exposure follows the light by exposureAdaptation only, so the
+    // scene grows lighter with the sun from night through sunset to noon. Full adaptation
+    // brought every hour to noon's brightness, and the guard below then dipped the scene
+    // where the haze glows around a sun on the horizon (measured in asrenderer_test --sky
+    // haze --sun-elevation: 83 at -3 degrees, 54 at +1.5, 83 at +6; now 35, 41, 59).
+    const float noon = max(dot(a.sunIlluminance, LUMINANCE), ILLUMINANCE_FLOOR);
+    const float adaptation = clamp(view.exposureAdaptation, 0.0, 1.0);
+    const float adapted = ATMOSPHERE_PI / illuminance * pow(min(illuminance / noon, 1.0), 1.0 - adaptation);
     // The guard only lowers: at night the floor above still decides.
-    result.exposure = min(ATMOSPHERE_PI / illuminance, SKY_KEY / max(skyMean, 1e-9));
+    result.exposure = min(adapted, SKY_KEY / max(skyMean, 1e-9));
     result.illuminance = illuminance;
     result.skyIrradiance = skyIrradiance;
 }

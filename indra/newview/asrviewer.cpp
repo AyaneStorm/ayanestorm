@@ -335,6 +335,8 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     static LLCachedControl<F32> glowStrength(gSavedSettings, "RenderGlowStrength", 0.325f);
     tone.bloom = llclamp(F32(bloomStrength()), 0.f, 1.f);
     tone.glow = renderGlow() ? llmax(F32(glowStrength()), 0.f) : 0.f;
+    static LLCachedControl<F32> adaptation(gSavedSettings, "ASRendererExposureAdaptation", 0.7f);
+    tone.adaptation = llclamp(F32(adaptation()), 0.f, 1.f);
 
     const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky(); // inside worldReady()
     if (!current)

@@ -102,6 +102,7 @@ struct ToneInput
     uint32_t mapper = TONE_MAPPER_ACES;   // RenderTonemapType: TONE_MAPPER_* in asrscene.h
     float bloom = 0.04f;                 // ASRendererBloomStrength
     float glow = 0.f;                     // RenderGlowStrength, 0 with RenderGlow off
+    float adaptation = 0.7f;              // ASRendererExposureAdaptation
 };
 
 struct FrameInput

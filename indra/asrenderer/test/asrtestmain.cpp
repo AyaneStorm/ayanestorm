@@ -3385,6 +3385,15 @@ int main(int argc, char** argv)
                 return 1;
             }
         }
+        else if (arg == "--sun-elevation" && i + 1 < argc)
+        {
+            // After --sky: the same sky with its sun at this elevation, in degrees, same azimuth.
+            const float elevation = std::stof(argv[++i]) * 3.14159265f / 180.f;
+            const float azimuth = std::atan2(sSky.sunDirection[1], sSky.sunDirection[0]);
+            sSky.sunDirection[0] = std::cos(elevation) * std::cos(azimuth);
+            sSky.sunDirection[1] = std::cos(elevation) * std::sin(azimuth);
+            sSky.sunDirection[2] = std::sin(elevation);
+        }
         else if (arg == "--overlay")
         {
             sOverlays = true; // selections and HUDs, see TestCity::showOverlays()
