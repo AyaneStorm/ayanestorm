@@ -108,16 +108,32 @@ float henyeyGreenstein(float g, float cosTheta)
 // strong one forward, the silver lining towards the light, and a weak one back. A sheet is
 // lit, not filled, so the phase is taken four times: an even phase then gives a Lambert
 // surface's 1 / pi.
-vec3 cloudLightFrom(Atmosphere a, vec3 point, vec3 light, vec3 direction)
+// The share of a light's disc (angular radius `radius`) above the horizon seen from `point`:
+// the planet's shadow fades over the disc's width as it sets for that point, instead of
+// cutting the light at its centre, which drew a hard dark band up the clouds at sunset.
+float lightAboveHorizon(Atmosphere a, vec3 point, vec3 light, float radius)
 {
-    if (raySphereIntersectNearest(point, light, a.bottomRadius) >= 0.0)
+    const float r = length(point);
+    const float sinHorizon = -sqrt(max(1.0 - (a.bottomRadius / r) * (a.bottomRadius / r), 0.0));
+    const float elevation = asin(clamp(dot(light, point / r), -1.0, 1.0)) - asin(sinHorizon);
+    // The part of a disc above a line x radii from its centre: a circular segment.
+    const float x = clamp(elevation / max(radius, 1e-4), -1.0, 1.0);
+    return 0.5 + (x * sqrt(1.0 - x * x) + asin(x)) / ATMOSPHERE_PI;
+}
+
+vec3 cloudLightFrom(Atmosphere a, vec3 point, vec3 light, float radius, vec3 direction)
+{
+    const float visible = lightAboveHorizon(a, point, light, radius);
+    if (visible <= 0.0)
     {
         return vec3(0.0);
     }
     const float r = length(point);
     const float c = dot(direction, light);
     const float phase = mix(henyeyGreenstein(-0.3, c), henyeyGreenstein(0.8, c), 0.7);
-    return sampleTransmittance(a, r, dot(light, point / r)) * (4.0 * phase);
+    // The part still visible takes the horizon's light once the centre has set.
+    const float sinHorizon = -sqrt(max(1.0 - (a.bottomRadius / r) * (a.bottomRadius / r), 0.0));
+    return sampleTransmittance(a, r, max(dot(light, point / r), sinHorizon + 1e-4)) * (4.0 * phase * visible);
 }
 
 // The cloud laid over `behind` (the sky with what lies beyond the air) seen from the camera.
@@ -131,8 +147,8 @@ vec3 cloudOver(Atmosphere a, vec3 direction, CloudHit hit, CloudShape shape, vec
 {
     const vec3 camera = atmosphereCamera(a);
     const vec3 point = camera + direction * hit.distance;
-    const vec3 direct = cloudLightFrom(a, point, a.sunDirection, direction) * a.sunIlluminance
-                      + cloudLightFrom(a, point, a.moonDirection, direction) * a.moonSkyLight;
+    const vec3 direct = cloudLightFrom(a, point, a.sunDirection, acos(a.sunCosRadius), direction) * a.sunIlluminance
+                      + cloudLightFrom(a, point, a.moonDirection, a.moonAngularRadius, direction) * a.moonSkyLight;
     const vec3 cloud = a.cloudAlbedo * (direct * (1.0 - shape.shadow) + skyIrradiance / ATMOSPHERE_PI);
 
     // The air in front, marched: a few km at most. Dividing two transmittance table reads
