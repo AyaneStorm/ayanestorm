@@ -23,65 +23,17 @@ layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
 #include "asrSceneLighting.glsl"
 #include "asrShadow.glsl"
 
-// Contact shadows: a short trace towards the shadowing light through the final depth, at
-// screen resolution, for what the maps cannot resolve: hair strands over skin, a nose on its
-// cheek, small things on a table. Avatars' alpha casters (hair, lace) are drawn into the maps
-// CONTACT_REACH away from the light (asrSceneVisibilityVertex.glsl), so on skin this close
-// this trace alone shadows them. Only what is in the depth casts:
-// blended surfaces (Mac OIT) do not. Run only where the light still reaches after the maps,
-// near the camera; the steps start at a fixed per-pixel offset, the same in every frame.
+// Contact shadows, made by asrContactShadowsC.glsl: 1 lit, 0 shadowed; written only for
+// pixels within its range, which is read from the same depth texel here.
+#include "asrContactShadows.glsl"
+layout(set = 1, binding = 1, r8) uniform readonly image2D contactMask;
 layout(set = 1, binding = 3) uniform texture2D depthImage;
-const float CONTACT_REACH = SHADOW_AVATAR_ALPHA_PUSH; // metres traced towards the light
-const float CONTACT_THICKNESS = 0.03; // metres: a surface in the depth hides the ray this far behind it
-const float CONTACT_RANGE = 12.0;     // metres from the camera; farther, the maps alone
-const int CONTACT_STEPS = 12;
 
-float contactShadow(ivec2 pixel, vec3 relative, vec3 normal, vec3 toLight)
+float contactShadow(ivec2 pixel)
 {
     ViewRef view = ViewRef(push.view);
-    const float start = fract(52.9829189 * fract(dot(vec2(pixel), vec2(0.06711056, 0.00583715)))); // interleaved gradient noise
-    const vec3 from = relative + normal * 0.002;
-    // How much the receiver's own depth changes over a pixel and a half, per metre away: seen
-    // at a grazing angle the ground steps by centimetres between rows, and a fixed tolerance
-    // found the ground itself, in stripes (user's capture, 26 November 2026).
-    const float pixelAngle = 2.0 / (view.projection.y * view.pixelSize.y);
-    const float slope = 1.5 * pixelAngle / max(abs(dot(normal, normalize(relative))), 0.05);
-    for (int i = 0; i < CONTACT_STEPS; ++i)
-    {
-        const vec3 p = from + toLight * (CONTACT_REACH * (float(i) + start) / float(CONTACT_STEPS));
-        const vec3 eye = vec3(dot(p, view.viewRows[0].xyz), dot(p, view.viewRows[1].xyz), dot(p, view.viewRows[2].xyz));
-        const float along = -eye.z;
-        if (along <= 0.0)
-        {
-            return 1.0;
-        }
-        const vec2 uv = vec2(eye.x * view.projection.x, -eye.y * view.projection.y) / along * 0.5 + 0.5;
-        if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0))))
-        {
-            return 1.0; // off screen: nothing known
-        }
-        // A step still on the receiver's own pixel or its neighbour reads the receiver itself:
-        // looking towards the light, the trace runs along the view and every step lands
-        // there, and the surface hid itself in a pattern seen only at that angle (user,
-        // 26 November 2026).
-        const ivec2 at = ivec2(uv * view.pixelSize.xy);
-        if (all(lessThanEqual(abs(at - pixel), ivec2(1))))
-        {
-            continue;
-        }
-        const float stored = texelFetch(sampler2D(depthImage, samplers[SHADOW_GATHER_SAMPLER]), at, 0).r;
-        if (stored <= 0.0)
-        {
-            continue; // the sky
-        }
-        // Reversed depth is near / distance along the view axis.
-        const float behind = along - view.projection.z / stored;
-        if (behind > max(0.002, along * slope) && behind < CONTACT_THICKNESS)
-        {
-            return 0.0;
-        }
-    }
-    return 1.0;
+    const float stored = texelFetch(sampler2D(depthImage, samplers[SHADOW_GATHER_SAMPLER]), pixel, 0).r;
+    return contactInRange(max(stored, 0.0) / view.projection.z) ? imageLoad(contactMask, pixel).r : 1.0;
 }
 
 vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy); // below
@@ -793,8 +745,7 @@ void main()
     {
         const uint light = ShadowViewsRef(view.shadowViews).light;
         const float reaching = light == SHADOW_LIGHT_SUN ? shadow.x : shadow.y;
-        if (light != SHADOW_LIGHT_NONE && view.shadowCascades != 0u && reaching > 0.0 && distance(surfacePoint, view.camera.xyz) < CONTACT_RANGE &&
-            view.debugView != DEBUG_VIEW_NO_CONTACT)
+        if (light != SHADOW_LIGHT_NONE && view.shadowCascades != 0u && reaching > 0.0 && view.debugView != DEBUG_VIEW_NO_CONTACT)
         {
             ExposureRef e = ExposureRef(view.exposure);
             const vec3 toLight = light == SHADOW_LIGHT_SUN ? e.sunDirection : e.moonDirection;
@@ -804,7 +755,7 @@ void main()
             // The smooth normal, turned to the side seen: a flat face's steps showed as facets.
             const vec3 turned = dot(worldNormal, seen) < 0.0 ? -worldNormal : worldNormal;
             const float facing = smoothstep(0.05, 0.25, dot(turned, toLight));
-            const float contact = mix(1.0, contactShadow(pixel, surfacePoint - view.camera.xyz, turned, toLight), facing);
+            const float contact = mix(1.0, contactShadow(pixel), facing);
             shadow *= light == SHADOW_LIGHT_SUN ? vec2(contact, 1.0) : vec2(1.0, contact);
         }
     }
@@ -859,6 +810,11 @@ void main()
     {
         const vec3 mode = (instance.flags & INSTANCE_MASKED) != 0u ? vec3(0.1, 0.8, 0.1) : vec3(0.5);
         shown = vec4(mode / max(ExposureRef(view.exposure).exposure, 1e-20), 1.0); // shown as is: the exposure turned it white
+    }
+    else if (view.debugView == DEBUG_VIEW_CONTACT_MASK)
+    {
+        // The sun shadow mask as made (asrContactShadowsC.glsl): white lit, black shadowed.
+        shown = vec4(vec3(contactShadow(pixel)) / max(ExposureRef(view.exposure).exposure, 1e-20), 1.0);
     }
     else if (view.debugView == DEBUG_VIEW_SHADOW_PATH)
     {

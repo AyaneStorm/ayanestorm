@@ -101,8 +101,14 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
         asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
         asrSkyStarsV asrSkyStarsF asrSceneBloomC
-        asrShadowFitC asrShadowV asrShadowMaskedV asrShadowMaskedF asrShadowShiftV asrShadowShiftF asrShadowReceiversC asrShadowDemandC)
+        asrShadowFitC asrShadowV asrShadowMaskedV asrShadowMaskedF asrShadowShiftV asrShadowShiftF asrShadowReceiversC asrShadowDemandC
+        asrContactSetupC asrContactShadowsC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
+endforeach()
+# The contact shadow pass's two programs share its work list; the resolve, its range.
+foreach(shader asrContactSetupC asrContactShadowsC asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrContactShadows.glsl)
 endforeach()
 # The texture encoders share their block loading and line fitting.
 foreach(shader asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C)

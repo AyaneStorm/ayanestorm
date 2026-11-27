@@ -69,6 +69,8 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("sun shadow", ResultScope::Persistent); // read as is between updates (ASRendererShadowInterval)
     graph.addResult("shadow cache", ResultScope::Persistent);
     graph.addResult("instance lods", ResultScope::Persistent);
+    graph.addResult("contact shadows", ResultScope::Frame);
+    graph.addResult("sun shadow mask", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -184,13 +186,20 @@ void declareSceneGraph(FrameGraph& graph)
                                   { ResultMultiscatterLut, ComputeRead },
                                   { ResultAerialLut, ComputeWrite } });
     graph.addPass("exposure", { { ResultTransmittanceLut, ComputeRead }, { ResultSkyViewLut, ComputeRead }, { ResultExposure, ComputeWrite } });
+    // Two dispatches: the work list (light's point, bands, rays), then the rays over it.
+    graph.addPass("contact shadows", { { ResultDepth, ComputeRead | Keep },
+                                       { ResultExposure, ComputeRead },
+                                       { ResultShadowViews, ComputeRead },
+                                       { ResultContactShadows, ComputeWrite },
+                                       { ResultSunShadowMask, ComputeWrite } });
     // The tiles' counts are cleared inside this pass, before its dispatch.
     graph.addPass("classify", { { ResultSceneData, ComputeRead },
                                 { ResultVisibleClusters, ComputeRead },
                                 { ResultVisibility, ComputeRead },
                                 { ResultResolveTiles, ComputeWrite } });
     graph.addPass("resolve", { { ResultSceneData, ComputeRead },
-                               { ResultDepth, ComputeRead | Keep }, // contact shadows
+                               { ResultSunShadowMask, ComputeRead },
+                               { ResultDepth, ComputeRead | Keep }, // where the mask was written
                                { ResultVisibleClusters, ComputeRead },
                                { ResultVisibility, ComputeRead },
                                { ResultResolveTiles, Indirect | ComputeRead },

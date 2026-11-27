@@ -80,6 +80,8 @@ enum SceneResult : ResultId
     ResultSunShadow,     // the sun's or moon's cascades, a depth layer each
     ResultShadowCache,   // their static casters alone, kept between frames
     ResultInstanceLods,  // each instance's LOD, kept to see it change
+    ResultContactShadows, // the contact shadow pass's work list (asrContactShadows.glsl)
+    ResultSunShadowMask, // contact shadows for the opaque pixels, read by the resolve
     ResultCount
 };
 
@@ -120,7 +122,8 @@ enum ScenePass : PassId
     PassSkyViewLut,
     PassAerialLut,
     PassExposure,
-    PassClassify,      // the resolve's tiles by material kind
+    PassContactShadows, // towards the light through the final depth, into the sun shadow mask
+    PassClassify,     // the resolve's tiles by material kind
     PassResolve,       // one indirect dispatch per kind
     PassStars,         // only while the sky has stars to show
     PassMacOITKeys,   // Mac OIT, declared by declareMacOIT()

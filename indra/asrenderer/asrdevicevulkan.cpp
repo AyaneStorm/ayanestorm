@@ -80,7 +80,6 @@ constexpr VkFormat SHADOW_FORMAT = VK_FORMAT_D16_UNORM; // sun and moon cascades
 constexpr uint32_t SCENE_IMAGE_BINDINGS = 22; // set 1, see createScene()
 constexpr uint32_t SCENE_BINDING_SUN_SHADOW = 20; // asrShadow.glsl's sunShadow
 constexpr uint32_t SCENE_BINDING_SHADOW_CACHE = 21; // asrShadowShiftF.glsl's shadowCache
-constexpr uint32_t SCENE_BINDING_FREE = 1;     // a number no shader declares
 constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
 constexpr uint32_t SCENE_SAMPLED_BINDINGS = 7; // the depth, the sky's four tables, the sun's shadow and its cache
 
@@ -1445,14 +1444,14 @@ private:
         {
             bindings[i].binding = i;
             bindings[i].descriptorType = sceneBindingSampled(i) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            bindings[i].descriptorCount = i == SCENE_BINDING_FREE ? 0 : 1; // 0 reserves the number, nothing to bind
+            bindings[i].descriptorCount = 1;
             bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
         layout.bindingCount = SCENE_IMAGE_BINDINGS;
         layout.pBindings = bindings;
 
-        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - SCENE_SAMPLED_BINDINGS - 1 },
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - SCENE_SAMPLED_BINDINGS },
                                                 { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, SCENE_SAMPLED_BINDINGS } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.maxSets = 1;
@@ -1512,6 +1511,7 @@ private:
         mResultImages[ResultSunShadow] = &mSunShadow;
         mResultImages[ResultShadowCache] = &mShadowCache;
         mResultImages[ResultNormals] = &mNormalImage;
+        mResultImages[ResultSunShadowMask] = &mContactMask;
         mResultImages[ResultLit] = &mLitImage;
         mResultImages[ResultSceneColor] = &mSceneColorImage;
         mResultImages[ResultBloom] = &mBloomImage;
@@ -1618,15 +1618,20 @@ private:
         mShadowShiftPipeline = mShadowMaskedPipeline ? createSceneRasterPipeline("asrShadowShiftV", "asrShadowShiftF", shift, error) : VK_NULL_HANDLE;
         mShadowReceiversPipeline = mShadowShiftPipeline ? createComputePipeline("asrShadowReceiversC", error) : VK_NULL_HANDLE;
         mShadowDemandPipeline = mShadowReceiversPipeline ? createComputePipeline("asrShadowDemandC", error) : VK_NULL_HANDLE;
-        if (!mShadowDemandPipeline ||
+        mContactSetupPipeline = mShadowDemandPipeline ? createComputePipeline("asrContactSetupC", error) : VK_NULL_HANDLE;
+        mContactShadowsPipeline = mContactSetupPipeline ? createComputePipeline("asrContactShadowsC", error) : VK_NULL_HANDLE;
+        if (!mContactShadowsPipeline ||
             !createBufferObject(mShadowViews, sizeof(GpuShadowViews), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "shadow views",
-                                MemoryCategory::Shadows, true))
+                                MemoryCategory::Shadows, true) ||
+            !createBufferObject(mContactShadows, CONTACT_SHADOWS_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                                "contact shadows", MemoryCategory::Shadows, true))
         {
             return false;
         }
         for (MappedBuffer& spheres : mShadowDirty)
         {
-            if (!growBuffer(spheres, SHADOW_MAX_DIRTY * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, MemoryCategory::Staging, "shadow dirty spheres"))
+            if (!growBuffer(spheres, SHADOW_MAX_DIRTY * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                            MemoryCategory::Staging, "shadow dirty spheres"))
             {
                 return false;
             }
@@ -1704,6 +1709,7 @@ private:
     {
         destroySunShadow();
         destroyBufferObject(mShadowViews, MemoryCategory::Shadows);
+        destroyBufferObject(mContactShadows, MemoryCategory::Shadows);
         destroyBufferObject(mShadowLists, MemoryCategory::Geometry);
         destroyBufferObject(mInstanceLods, MemoryCategory::Geometry);
         for (MappedBuffer& spheres : mShadowDirty)
@@ -1711,7 +1717,7 @@ private:
             destroyBuffer(spheres, MemoryCategory::Staging);
         }
         for (VkPipeline pipeline : { mShadowFitPipeline, mShadowPipeline, mShadowMaskedPipeline, mShadowShiftPipeline, mShadowReceiversPipeline,
-                                     mShadowDemandPipeline })
+                                     mShadowDemandPipeline, mContactSetupPipeline, mContactShadowsPipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
@@ -1719,7 +1725,7 @@ private:
             }
         }
         mShadowFitPipeline = mShadowPipeline = mShadowMaskedPipeline = mShadowShiftPipeline = mShadowReceiversPipeline = VK_NULL_HANDLE;
-        mShadowDemandPipeline = VK_NULL_HANDLE;
+        mShadowDemandPipeline = mContactSetupPipeline = mContactShadowsPipeline = VK_NULL_HANDLE;
     }
 
     void destroyTarget(TargetImage& target)
@@ -1759,6 +1765,7 @@ private:
         destroyTarget(mVisibilityImage);
         destroyTarget(mDepthImage);
         destroyTarget(mNormalImage);
+        destroyTarget(mContactMask);
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
@@ -1777,6 +1784,7 @@ private:
         if (!createTarget(mVisibilityImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "visibility buffer") ||
             !createTarget(mDepthImage, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "depth buffer") ||
             !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target") ||
+            !createTarget(mContactMask, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1, "sun shadow mask") ||
             !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
             !createTarget(mBloomImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "bloom atlas",
@@ -1798,7 +1806,7 @@ private:
             return false;
         }
 
-        const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  VK_NULL_HANDLE,      mNormalImage.view,     mDepthImage.view,
+        const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  mContactMask.view,   mNormalImage.view,     mDepthImage.view,
                                                           mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
                                                           mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
@@ -1809,10 +1817,6 @@ private:
         uint32_t count = 0;
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
-            if (i == SCENE_BINDING_FREE)
-            {
-                continue;
-            }
             images[count].imageView = views[i];
             images[count].imageLayout = sceneBindingDepth(i) ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
             writes[count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2708,9 +2712,11 @@ private:
         destroyTarget(mVisibilityImage);
         destroyTarget(mDepthImage);
         destroyTarget(mNormalImage);
+        destroyTarget(mContactMask);
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
+        destroyTarget(mBloomImage);
         destroyTarget(mSelectionMask);
         destroyTarget(mUIDepth);
         destroyMacOITTargets();
@@ -4141,6 +4147,7 @@ private:
             mLodReset = true;
         }
         view.instanceLods = mInstanceLods.address;
+        view.contactShadows = mContactShadows.address;
         fillShadowView(view, mShadowCascades, mSunShadowSize, mShadowViews.address, mShadowLists.address);
         view.shadowLightStep = mShadowLightStep;
         // The maps are redrawn every ASRendererShadowInterval (the user's exception to the
@@ -4546,6 +4553,22 @@ private:
         mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
         mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, late), true, true); });
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
+        mGraph.setBody(PassContactShadows, [this]()
+        {
+            VkCommandBuffer commands = mRecordCommands;
+            const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mContactSetupPipeline);
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+            pushScene(commands);
+            vkCmdDispatch(commands, 1, 1, 1);
+            // The work list, then its rays: the dispatch size and the bands come from it.
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                          VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mContactShadowsPipeline);
+            vkCmdDispatchIndirect(commands, mContactShadows.buffer, 0);
+            return true;
+        });
         mGraph.setBody(PassClassify, [this]() { return passClassify(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
         mGraph.setBody(PassStars, [this]() { return passStars(); });
@@ -5170,6 +5193,9 @@ private:
     VkPipeline mShadowShiftPipeline = VK_NULL_HANDLE;
     VkPipeline mShadowReceiversPipeline = VK_NULL_HANDLE;
     VkPipeline mShadowDemandPipeline = VK_NULL_HANDLE;
+    VkPipeline mContactSetupPipeline = VK_NULL_HANDLE;
+    VkPipeline mContactShadowsPipeline = VK_NULL_HANDLE;
+    GpuBuffer mContactShadows; // ContactShadowsRef: the contact shadow pass's work list
     bool mShadowReset = true; // new maps: the views buffer is cleared, so every cascade is redrawn
     uint32_t mSunShadowSize = 0;
     uint32_t mWantedShadowSize = 1; // from ShadowInput, each frame
@@ -5239,6 +5265,7 @@ private:
     TargetImage mVisibilityImage;
     TargetImage mDepthImage;
     TargetImage mNormalImage;
+    TargetImage mContactMask; // the sun shadow mask: contact shadows, R8
     TargetImage mAuditImage;
     TargetImage mLitImage;
     TargetImage mSceneColorImage;

@@ -111,6 +111,9 @@ uint32_t sFramesTaken = 0;
 float sCameraSpeed = 1.f; // --camera-speed: the orbit's pace, slower for frame-to-frame comparisons
 bool sLookMoon = false; // --look-moon
 bool sLookSun = false;  // --look-sun: level, towards the sun's azimuth
+bool sFixedCamera = false; // --camera EX EY EZ TX TY TZ: a still camera, eye then target
+float sFixedCameraValues[6]{};
+bool sContactTest = false; // --contact-test: small things on a platform 200 m up (TestCity)
 std::string sMoonMaps;  // --moon-maps DIR
 asr::ToneInput sTone;   // the sky's, as the viewer sets it (--sky starley)
 asr::ShadowInput sShadow; // --shadow-detail, --shadow-scale
@@ -3193,9 +3196,12 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     };
     if (drawScene)
     {
-        city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
+        city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street, sContactTest);
         city->skyView = sSkyView;
         city->calm = sCalm;
+        city->fixedCamera = sFixedCamera;
+        std::copy(sFixedCameraValues, sFixedCameraValues + 3, city->fixedEye);
+        std::copy(sFixedCameraValues + 3, sFixedCameraValues + 6, city->fixedTarget);
         if (sLookMoon)
         {
             // The disc fills about 70% of the window's height, or the halo 90% of it.
@@ -3569,6 +3575,18 @@ int main(int argc, char** argv)
         else if (arg == "--look-sun")
         {
             sLookSun = true;
+        }
+        else if (arg == "--contact-test")
+        {
+            sContactTest = true;
+        }
+        else if (arg == "--camera" && i + 6 < argc)
+        {
+            sFixedCamera = true;
+            for (float& value : sFixedCameraValues)
+            {
+                value = float(atof(argv[++i]));
+            }
         }
         else if (arg == "--look-horizon")
         {

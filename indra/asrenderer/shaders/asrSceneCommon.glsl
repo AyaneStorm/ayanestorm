@@ -295,6 +295,8 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     float shadowLightStep;
     uint shadowUpdate;       // GpuSceneView::shadowUpdate
     uint64_t instanceLods;   // see selectLod() in asrSceneCullC.glsl
+    uint64_t contactShadows; // ContactShadowsRef in asrContactShadows.glsl
+    uint viewPad[2];
 };
 
 // Shadow views, as GpuShadowViews: the shadow fit pass writes them, the cull, the shadow draw
@@ -418,6 +420,7 @@ const uint DEBUG_VIEW_SHADOW_CASCADES = 8u;
 const uint DEBUG_VIEW_NO_CONTACT = 9u;
 const uint DEBUG_VIEW_SHADOW_CAUSE = 10u;
 const uint DEBUG_VIEW_SHADOW_PATH = 11u;
+const uint DEBUG_VIEW_CONTACT_MASK = 12u; // the contact shadow mask, white lit
 
 // The sphere touches the view frustum and is nearer than the far clip.
 bool insideView(ViewRef view, vec3 center, float radius)

@@ -323,7 +323,7 @@ namespace asrtest
 class TestCity
 {
 public:
-    TestCity(asr::SceneQueue& scene, asr::TextureQueue& textures, bool street) : mScene(scene), mStreet(street)
+    TestCity(asr::SceneQueue& scene, asr::TextureQueue& textures, bool street, bool contactTest = false) : mScene(scene), mStreet(street), mContactTest(contactTest)
     {
         for (int axis = 0; axis < 3; ++axis)
         {
@@ -387,6 +387,26 @@ public:
         // The ground.
         place(mBoxFaces[4], mMaterials[0], 0.f, 0.f, 0.f, EXTENT * 2.2f, EXTENT * 2.2f, 1.f, false);
         addHills(scene, textures);
+        if (mContactTest)
+        {
+            // --contact-test: small things on a platform 200 m up, where nothing else shades
+            // them, for contact shadows: a 2 cm pole, a 3 cm cube, a 1 cm slab, a 10 cm ball,
+            // and a 3 mm rod 2 cm above the platform, as a hair strand over skin.
+            const float top = 200.1f;
+            const auto box = [this](uint32_t material, float x, float y, float z, float sx, float sy, float sz)
+            {
+                for (uint32_t face = 0; face < 6; ++face)
+                {
+                    place(mBoxFaces[face], material, x, y, z, sx, sy, sz, false);
+                }
+            };
+            box(mMaterials[0], 0.f, 0.f, top - 0.1f, 3.f, 3.f, 0.2f);
+            box(mMaterials[1], 0.f, 0.f, top + 0.25f, 0.02f, 0.02f, 0.5f);
+            box(mMaterials[1], 0.3f, 0.f, top + 0.015f, 0.03f, 0.03f, 0.03f);
+            box(mMaterials[1], -0.3f, 0.2f, top + 0.005f, 0.4f, 0.3f, 0.01f);
+            box(mMaterials[1], 0.f, -0.3f, top + 0.02f, 0.4f, 0.003f, 0.003f);
+            place(mSphere, mMaterials[1], 0.f, 0.4f, top + 0.1f, 0.1f, 0.1f, 0.1f, false);
+        }
 
         uint32_t random = 12345;
         const auto next = [&random]() { random = random * 1664525u + 1013904223u; return (random >> 16) / 65536.f; };
@@ -515,10 +535,18 @@ public:
     // vertical field of view (radians); 0 for none.
     float lookDirection[3]{};
     float lookFov = 0.f;
+    // --camera: a still camera at fixedEye looking at fixedTarget, for close-ups that repeat.
+    bool fixedCamera = false;
+    float fixedEye[3]{};
+    float fixedTarget[3]{};
 
     asr::SceneCamera3D camera(float seconds, uint32_t width, uint32_t height) const
     {
         const float aspect = float(width) / float(std::max(height, 1u));
+        if (fixedCamera)
+        {
+            return asr::makeCamera(fixedEye, fixedTarget, 1.05f, aspect, 0.05f);
+        }
         if (lookFov > 0.f)
         {
             const float eye[3] = { 0.f, 0.f, 150.f }; // above the city, so nothing stands in front
@@ -988,6 +1016,7 @@ private:
 
     asr::SceneQueue& mScene;
     bool mStreet;
+    bool mContactTest;
     uint32_t mFence = 0;
     uint32_t mGroundTexture = 0;
     uint32_t mNormalTiles = 0; // normalTiles()

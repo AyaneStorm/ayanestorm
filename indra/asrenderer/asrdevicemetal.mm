@@ -689,7 +689,9 @@ private:
         mShadowFitPipeline = createComputePipeline(shaderDir, "asrShadowFitC", error);
         mShadowReceiversPipeline = createComputePipeline(shaderDir, "asrShadowReceiversC", error);
         mShadowDemandPipeline = mShadowReceiversPipeline ? createComputePipeline(shaderDir, "asrShadowDemandC", error) : nil;
-        if (!mShadowDemandPipeline)
+        mContactSetupPipeline = mShadowDemandPipeline ? createComputePipeline(shaderDir, "asrContactSetupC", error) : nil;
+        mContactShadowsPipeline = mContactSetupPipeline ? createComputePipeline(shaderDir, "asrContactShadowsC", error) : nil;
+        if (!mContactShadowsPipeline)
         {
             return false;
         }
@@ -712,6 +714,7 @@ private:
         depth.depthCompareFunction = MTLCompareFunctionAlways;
         mShadowShiftDepthState = [mDevice newDepthStencilStateWithDescriptor:depth];
         mShadowViews = createSceneBuffer(sizeof(GpuShadowViews), MemoryCategory::Shadows, "shadow views", true);
+        mContactShadows = createSceneBuffer(CONTACT_SHADOWS_BYTES, MemoryCategory::Shadows, "contact shadows", true);
         for (id<MTLBuffer> __strong& spheres : mShadowDirty)
         {
             spheres = createSceneBuffer(SHADOW_MAX_DIRTY * 16, MemoryCategory::Staging, "shadow dirty spheres", true);
@@ -1724,6 +1727,7 @@ private:
         mVisibilityTarget = createTarget(MTLPixelFormatR32Uint, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "visibility buffer");
         mDepthTarget = createTarget(MTLPixelFormatDepth32Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "depth buffer");
         mNormalTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "normal target");
+        mContactMask = createTarget(MTLPixelFormatR8Unorm, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 1, "sun shadow mask");
         mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget, width, height, 8, "lit target");
         mSceneColorTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "scene colour target");
         mSelectionMask = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "selection mask");
@@ -1746,7 +1750,7 @@ private:
             mRetiredBuffers.push_back({ mResolveTiles, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::RenderTargets });
         }
         mResolveTiles = createSceneBuffer(resolveTilesBytes(width, height), MemoryCategory::RenderTargets, "resolve tiles", true);
-        return mVisibilityTarget && mDepthTarget && mNormalTarget && mScenePyramid && mResolveTiles;
+        return mVisibilityTarget && mDepthTarget && mNormalTarget && mContactMask && mScenePyramid && mResolveTiles;
     }
 
     // Frames still running may read the old table, so it stays until they are done.
@@ -1899,6 +1903,7 @@ private:
             mLodReset = true;
         }
         view.instanceLods = addressOf(mInstanceLods);
+        view.contactShadows = addressOf(mContactShadows);
         fillShadowView(view, mShadowCascades, mShadowSize, addressOf(mShadowViews), addressOf(mShadowLists));
         view.shadowLightStep = mShadowLightStep;
         // The maps are redrawn every ASRendererShadowInterval (the user's exception to the
@@ -2189,7 +2194,8 @@ private:
         [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [resolve setTexture:mVisibilityTarget atIndex:0];
         [resolve setTexture:mNormalTarget atIndex:2];
-        [resolve setTexture:mDepthTarget atIndex:3]; // contact shadows
+        [resolve setTexture:mContactMask atIndex:1];
+        [resolve setTexture:mDepthTarget atIndex:3]; // where the mask was written
         [resolve setTexture:mLitTarget atIndex:8];
         [resolve setTexture:mSunShadow atIndex:20]; // asrShadow.glsl
         bindSkyTables(resolve); // the background
@@ -2287,6 +2293,27 @@ private:
             [encoder dispatchThreadgroups:MTLSizeMake(SHADOW_DEMAND_SLOTS / 256, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
             [encoder updateFence:mSceneFence];
             [encoder endEncoding];
+            return true;
+        });
+        mGraph.setBody(PassContactShadows, [this]()
+        {
+            // The work list, then its rays in a second encoder: the dispatch size and the bands come from it.
+            id<MTLComputeCommandEncoder> setup = beginCompute();
+            [setup setComputePipelineState:mContactSetupPipeline];
+            [setup setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+            [setup setTexture:mContactMask atIndex:1];
+            [setup dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+            [setup updateFence:mSceneFence];
+            [setup endEncoding];
+            id<MTLComputeCommandEncoder> rays = beginCompute();
+            [rays setComputePipelineState:mContactShadowsPipeline];
+            [rays setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+            [rays setTexture:mContactMask atIndex:1];
+            [rays setTexture:mDepthTarget atIndex:3];
+            [rays dispatchThreadgroupsWithIndirectBuffer:mContactShadows indirectBufferOffset:0
+                                   threadsPerThreadgroup:MTLSizeMake(CONTACT_GROUP, 1, 1)];
+            [rays updateFence:mSceneFence];
+            [rays endEncoding];
             return true;
         });
         mGraph.setBody(PassLodSelect, [this]()
@@ -3476,6 +3503,10 @@ private:
     id<MTLBuffer> mInstanceLods = nil; // GpuSceneView::instanceLods
     bool mLodReset = true;
     id<MTLBuffer> mShadowViews = nil;
+    id<MTLBuffer> mContactShadows = nil; // ContactShadowsRef: the contact shadow pass's work list
+    id<MTLComputePipelineState> mContactSetupPipeline = nil;
+    id<MTLComputePipelineState> mContactShadowsPipeline = nil;
+    id<MTLTexture> mContactMask = nil; // the sun shadow mask: contact shadows, R8
     id<MTLBuffer> mShadowDirty[FRAMES_IN_FLIGHT] = {};
     id<MTLTexture> mSunShadow = nil;   // the working map, a layer per cascade
     id<MTLTexture> mShadowCache = nil; // static casters alone, kept between frames

@@ -848,7 +848,15 @@ struct GpuSceneView
     float shadowLightStep;    // cosine of ASRendererShadowSunStep: the cache's light moves when the light leaves it
     uint32_t shadowUpdate;    // 1: the shadow maps are redrawn this frame; 0: every reader uses the last ones (ASRendererShadowInterval)
     uint64_t instanceLods;    // a word per instance: the LOD every view draws it with, chosen by CULL_LOD; LOD_UNKNOWN when new
+    uint64_t contactShadows;  // the contact shadow pass's work list: see asrContactShadows.glsl
+    uint32_t viewPad[2];
 };
+
+// The contact shadow pass's work list, as ContactShadowsRef: a 32-byte header, then up to
+// CONTACT_MAX_ENTRIES bands of 16 bytes. Its first 16 bytes are the main pass's indirect dispatch.
+constexpr uint32_t CONTACT_GROUP = 128;
+constexpr uint32_t CONTACT_MAX_ENTRIES = 4 * 132;
+constexpr uint64_t CONTACT_SHADOWS_BYTES = 32 + uint64_t(CONTACT_MAX_ENTRIES) * 16;
 
 // The resolve runs once per material kind, each over only the tiles holding that kind
 // (asrSceneClassifyC.glsl). Header: a dispatch per kind slot; then each kind's tile list,
@@ -864,7 +872,7 @@ inline uint64_t resolveTilesBytes(uint32_t width, uint32_t height)
 {
     return RESOLVE_TILES_HEADER + uint64_t(RESOLVE_KINDS) * resolveTileCapacity(width, height) * 4;
 }
-static_assert(sizeof(GpuSceneView) == 1056, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 1072, "shaders read this layout");
 static_assert(offsetof(GpuSceneView, shadowDirty) % 8 == 0, "std430 aligns a uint64_t to 8");
 static_assert(offsetof(GpuSceneView, instanceLods) % 8 == 0, "std430 aligns a uint64_t to 8");
 static_assert(offsetof(GpuSceneView, shadowViews) % 8 == 0, "std430 aligns a uint64_t to 8");

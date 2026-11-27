@@ -82,7 +82,9 @@ void main()
     vec3 color = imageLoad(sceneColor, pixel).rgb;
     ViewRef view = ViewRef(push.view);
     const uint debugView = view.debugView;
-    if (debugView != 0u && debugView != DEBUG_VIEW_NO_OCCLUSION)
+    // The views that leave one thing out are the image as usual; the others are colour codes.
+    if (debugView != 0u && debugView != DEBUG_VIEW_NO_OCCLUSION && debugView != DEBUG_VIEW_NO_ENVIRONMENT &&
+        debugView != DEBUG_VIEW_NO_HIGHLIGHT && debugView != DEBUG_VIEW_NO_CONTACT)
     {
         frag_color = vec4(color, 1.0); // colours meant as they are
         return;
