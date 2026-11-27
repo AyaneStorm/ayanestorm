@@ -10,6 +10,9 @@
  * of that cascade, and its depth by a texel more, so a lit surface does not shadow itself.
  */
 layout(set = 1, binding = 20) uniform texture2DArray sunShadow;
+// Partly covering casters (hair, lace, leaf edges): optical depth and optical depth times
+// depth, summed per texel (asrShadowAlpha.glsl).
+layout(set = 1, binding = 22) uniform texture2DArray sunOpacity;
 
 const uint SHADOW_GATHER_SAMPLER = 0u; // UISampler::LinearClamp: gathers read whole texels
 const float SHADOW_NORMAL_OFFSET = 1.5; // texels
@@ -135,6 +138,31 @@ float shadowCascade(ShadowView shadow, vec2 at, float depth, vec2 steepness, flo
     return mix(box, disc, clamp((radius - SHADOW_BOX_RADIUS) / (SHADOW_BOX_RADIUS * 0.5), 0.0, 1.0));
 }
 
+// The share of light partly covering casters let through to a receiver at texel position
+// `at`, depth `depth`. Each texel holds their summed optical depth and its mean depth: a
+// receiver behind that mean takes it, one in front does not, over SHADOW_OPACITY_SPREAD (the
+// casters' own depth inside a head of hair). 4 bilinear taps on a fixed diagonal, a texel out
+// at least (the depth map's box: with one tap a sheet's edge showed its texel stairs), wider
+// with the casters' height above the receiver as PCSS's edges, so neighbours agree.
+const float SHADOW_OPACITY_SPREAD = 0.02; // metres
+float shadowOpacity(ShadowView shadow, vec2 at, float depth, float resolution)
+{
+    const float layer = float(shadow.layer);
+    const float spread = SHADOW_OPACITY_SPREAD / shadow.depthRange;
+    const vec2 centre = textureLod(sampler2DArray(sunOpacity, samplers[SHADOW_GATHER_SAMPLER]), vec3(at / resolution, layer), 0.0).rg;
+    const float height = centre.x > 0.0 ? max(centre.y / centre.x - depth, 0.0) * shadow.depthRange : 0.0;
+    const float radius = clamp(height * SHADOW_LIGHT_RADIUS / shadow.lightDirection.w, 1.0, SHADOW_FILTER_TEXELS) * 0.7071;
+    float optical = 0.0;
+    for (uint i = 0u; i < 4u; ++i)
+    {
+        const vec2 offset = vec2((i & 1u) != 0u ? radius : -radius, (i & 2u) != 0u ? radius : -radius);
+        const vec2 tap = textureLod(sampler2DArray(sunOpacity, samplers[SHADOW_GATHER_SAMPLER]), vec3((at + offset) / resolution, layer), 0.0).rg;
+        const float tapMean = tap.x > 0.0 ? tap.y / tap.x : 0.0;
+        optical += 0.25 * tap.x * clamp((tapMean - depth) / spread + 0.5, 0.0, 1.0);
+    }
+    return exp(-optical);
+}
+
 // Where a point falls in cascade i: x, y in texels; z its biased depth; w how far inside the
 // usable window it is, in texels (negative: outside, or past the light's side).
 vec4 shadowPlace(ShadowView shadow, vec3 relative, vec3 normal, float resolution)
@@ -193,14 +221,17 @@ float asr_shadow_sun(vec3 relative, vec3 normal)
         {
             continue;
         }
-        float lit = shadowCascade(shadow, place.xy, place.z, shadowSlope(shadow, normal), resolution);
+        float lit = shadowCascade(shadow, place.xy, place.z, shadowSlope(shadow, normal), resolution) *
+                    shadowOpacity(shadow, place.xy, place.z, resolution);
         if (place.w < band && i + 1u < count)
         {
             const ShadowView next = shadows.views[i + 1u];
             const vec4 outer = shadowPlace(next, relative, normal, resolution);
             if (outer.w >= 0.0)
             {
-                lit = mix(shadowCascade(next, outer.xy, outer.z, shadowSlope(next, normal), resolution), lit, smoothstep(0.0, band, place.w));
+                const float nextLit = shadowCascade(next, outer.xy, outer.z, shadowSlope(next, normal), resolution) *
+                                      shadowOpacity(next, outer.xy, outer.z, resolution);
+                lit = mix(nextLit, lit, smoothstep(0.0, band, place.w));
             }
         }
         return mix(lit, 1.0, smoothstep(reach * (1.0 - SHADOW_FADE), reach, distanceToCamera));

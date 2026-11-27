@@ -19,7 +19,8 @@ const uint CONTACT_GROUP = 128u;      // threads per group, and rows per band
 const int CONTACT_SAMPLES = 128;      // depths compared per pixel: 6 cm up to about 0.3 m away
 const uint CONTACT_MAX_BANDS = 132u;  // per sector: 16384 rows
 const uint CONTACT_MAX_ENTRIES = 4u * CONTACT_MAX_BANDS;
-const float CONTACT_REACH = SHADOW_AVATAR_ALPHA_PUSH; // metres towards the light
+const float CONTACT_BIAS_TEXELS = 3.5; // reach in cascade 0 texels: its bias (1.5 + 1) and a texel for its filter
+const float CONTACT_REACH_MAX = 0.06;  // metres towards the light, at most
 const float CONTACT_THICKNESS = 0.03; // metres: a surface in the depth hides the ray this far behind it
 const float CONTACT_RANGE = 12.0;     // metres along the view; farther, the maps alone
 // How far the light's point may sit from the screen, in pixels: past this, the point is

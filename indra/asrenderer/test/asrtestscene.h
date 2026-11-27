@@ -344,6 +344,10 @@ public:
         asr::MaterialDesc fence;
         fence.texture = checker(textures, 0, 256, 0x00FFFFFFu);
         mFence = scene.addMaterial(fence);
+        // The same holes 20 times finer, half a millimetre: thinner than any shadow texel, as hair.
+        fence.uvRow0[0] = 20.f;
+        fence.uvRow1[1] = 20.f;
+        mHair = scene.addMaterial(fence);
 
         for (uint32_t i = 0; i < MATERIALS; ++i)
         {
@@ -406,6 +410,8 @@ public:
             box(mMaterials[1], -0.3f, 0.2f, top + 0.005f, 0.4f, 0.3f, 0.01f);
             box(mMaterials[1], 0.f, -0.3f, top + 0.02f, 0.4f, 0.003f, 0.003f);
             place(mSphere, mMaterials[1], 0.f, 0.4f, top + 0.1f, 0.1f, 0.1f, 0.1f, false);
+            // A sheet with holes 3 cm up, as hair over skin: its shadow comes from the opacity map.
+            place(mBoxFaces[4], mHair, 0.4f, 0.4f, top + 0.03f, 0.4f, 0.4f, 0.002f, false, asr::INSTANCE_DOUBLE_SIDED | asr::INSTANCE_MASKED);
         }
 
         uint32_t random = 12345;
@@ -1018,6 +1024,7 @@ private:
     bool mStreet;
     bool mContactTest;
     uint32_t mFence = 0;
+    uint32_t mHair = 0; // --contact-test's sheet: mFence's holes, sub-millimetre
     uint32_t mGroundTexture = 0;
     uint32_t mNormalTiles = 0; // normalTiles()
     uint32_t mBoxFaces[6]{};

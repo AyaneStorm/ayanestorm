@@ -68,6 +68,8 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("shadow lists", ResultScope::Frame);
     graph.addResult("sun shadow", ResultScope::Persistent); // read as is between updates (ASRendererShadowInterval)
     graph.addResult("shadow cache", ResultScope::Persistent);
+    graph.addResult("sun opacity", ResultScope::Persistent);
+    graph.addResult("opacity cache", ResultScope::Persistent);
     graph.addResult("instance lods", ResultScope::Persistent);
     graph.addResult("contact shadows", ResultScope::Frame);
     graph.addResult("sun shadow mask", ResultScope::Frame);
@@ -160,22 +162,28 @@ void declareSceneGraph(FrameGraph& graph)
     // casters drawn into its dirty tiles, copied back, then moving casters on top.
     graph.addPass("shadow shift", { { ResultShadowViews, FragmentRead },
                                     { ResultShadowCache, FragmentRead | PreviousFrame },
-                                    { ResultSunShadow, DepthTarget | Keep } });
+                                    { ResultOpacityCache, FragmentRead | PreviousFrame },
+                                    { ResultSunShadow, DepthTarget | Keep },
+                                    { ResultSunOpacity, ColorTarget | Keep } });
     // Masked casters add the texture levels they read to GpuShadowViews::demand.
     graph.addPass("shadow draw", { { ResultSceneData, VertexRead },
                                    { ResultDrawArguments, Indirect },
                                    { ResultShadowViews, VertexRead | FragmentRead | FragmentWrite | Keep },
                                    { ResultShadowLists, VertexRead },
-                                   { ResultSunShadow, DepthTarget | Keep } });
+                                   { ResultSunShadow, DepthTarget | Keep },
+                                   { ResultSunOpacity, ColorTarget | Keep } });
     // Also clears the dirty tiles it has drawn: marks gathered until the next update add up.
     graph.addPass("shadow store", { { ResultSunShadow, CopyRead | Keep },
                                     { ResultShadowCache, CopyWrite },
+                                    { ResultSunOpacity, CopyRead | Keep },
+                                    { ResultOpacityCache, CopyWrite },
                                     { ResultShadowViews, CopyWrite | Keep } });
     graph.addPass("shadow moving", { { ResultSceneData, VertexRead },
                                      { ResultDrawArguments, Indirect },
                                      { ResultShadowViews, VertexRead | FragmentRead | FragmentWrite | Keep },
                                      { ResultShadowLists, VertexRead },
-                                     { ResultSunShadow, DepthTarget | Keep } });
+                                     { ResultSunShadow, DepthTarget | Keep },
+                                     { ResultSunOpacity, ColorTarget | Keep } });
     // The sky's tables, rebuilt every frame since EEP skies blend: each reads the ones before.
     graph.addPass("transmittance lut", { { ResultTransmittanceLut, ComputeWrite } });
     graph.addPass("multiscatter lut", { { ResultTransmittanceLut, ComputeRead }, { ResultMultiscatterLut, ComputeWrite } });
@@ -209,6 +217,7 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultExposure, ComputeRead },
                                { ResultShadowViews, ComputeRead },
                                { ResultSunShadow, ComputeRead },
+                               { ResultSunOpacity, ComputeRead },
                                { ResultNormals, ComputeWrite },
                                { ResultLit, ComputeWrite },
                                { ResultTextureFeedback, ComputeWrite | Keep } });
@@ -298,6 +307,7 @@ void declareMacOIT(FrameGraph& graph)
                                     { ResultAerialLut, FragmentRead },
                                     { ResultShadowViews, FragmentRead },
                                     { ResultSunShadow, FragmentRead },
+                                    { ResultSunOpacity, FragmentRead },
                                     { ResultMacOITColor, ColorTarget },
                                     { ResultMacOITWeights, ColorTarget },
                                     { ResultTextureFeedback, FragmentWrite | Keep } });

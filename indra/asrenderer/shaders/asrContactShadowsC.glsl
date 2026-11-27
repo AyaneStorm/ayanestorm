@@ -1,15 +1,16 @@
 /**
  * asrContactShadowsC.glsl
  * Contact shadows into the sun shadow mask: for each pixel, whether something in the final
- * depth hides it from the shadowing light within CONTACT_REACH, at screen resolution. This is
- * what the maps cannot resolve: hair strands over skin, a nose on its cheek, small things on a
- * table. Avatars' alpha casters (hair, lace) are drawn into the maps CONTACT_REACH away from
- * the light (asrSceneVisibilityVertex.glsl), so on skin this close only this pass shadows them.
+ * depth hides it from the shadowing light within contactReach(), at screen resolution: the gap
+ * the maps' bias leaves above every receiver (asrShadow.glsl), where small things on a table
+ * lose their shadow's foot. Farther blockers are the maps' alone, with PCSS edges: a fixed
+ * 6 cm reach (once the hair push) shadowed faces in a high sun with hard patches under the
+ * brows and nose (user's capture, 27 November 2026). Hair casts through the opacity maps.
  * Only what is in the depth casts: blended surfaces (Mac OIT) do not.
  *
  * One group follows one ray across one band (asrContactShadows.glsl). The ray's own depth
  * changes linearly in 1 / distance along its line on screen, so each pixel needs only where
- * its CONTACT_REACH end lands: its rows until there are compared, at most CONTACT_SAMPLES.
+ * its reach's end lands: its rows until there are compared, at most CONTACT_SAMPLES.
  * 1: lit, 0: shadowed. Pixels beyond CONTACT_RANGE and the sky are 1.
  */
 #version 460
@@ -105,13 +106,17 @@ void main()
     }
     const float here = 1.0 / ownInverse;
 
-    // The point and its CONTACT_REACH end, camera-relative.
+    // The point and its reach's end, camera-relative.
     const vec2 ndc = (vec2(pixel) + 0.5) * view.pixelSize.zw * 2.0 - 1.0;
     const vec3 eye = vec3(ndc.x * here / view.projection.x, -ndc.y * here / view.projection.y, -here);
     const vec3 relative = eye.x * view.viewRows[0].xyz + eye.y * view.viewRows[1].xyz + eye.z * view.viewRows[2].xyz;
     ExposureRef e = ExposureRef(view.exposure);
     const vec3 toLight = work.light == SHADOW_LIGHT_SUN ? e.sunDirection : e.moonDirection;
-    float reach = CONTACT_REACH;
+    // The finest cascade's bias, as the resolve moves a receiver (SHADOW_NORMAL_OFFSET texels
+    // along its normal, SHADOW_DEPTH_BIAS in depth), and a texel more for its filter.
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    const float texel = shadows.count != 0u ? shadows.views[0].lightDirection.w : CONTACT_REACH_MAX / CONTACT_BIAS_TEXELS;
+    float reach = min(CONTACT_BIAS_TEXELS * texel, CONTACT_REACH_MAX);
     const float endAlong = here - reach * dot(toLight, view.viewRows[2].xyz);
     // A ray towards the camera stops halfway to it.
     if (endAlong < 0.5 * here)

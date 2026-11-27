@@ -666,12 +666,26 @@ private:
         return pipeline;
     }
 
-    id<MTLRenderPipelineState> createShadowPipeline(id<MTLFunction> vertex, id<MTLFunction> fragment, std::string& error)
+    // Every shadow draw binds the opacity map beside the depth (asrShadowAlpha.glsl): depth
+    // pipelines leave it, the opacity pipeline adds to it, the shift writes it.
+    enum class ShadowOpacity { Off, Add, Write };
+    id<MTLRenderPipelineState> createShadowPipeline(id<MTLFunction> vertex, id<MTLFunction> fragment, ShadowOpacity opacity, std::string& error)
     {
         MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
         descriptor.vertexFunction = vertex;
         descriptor.fragmentFunction = fragment; // nil: depth only
         descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth16Unorm;
+        MTLRenderPipelineColorAttachmentDescriptor* color = descriptor.colorAttachments[0];
+        color.pixelFormat = MTLPixelFormatRG16Float;
+        color.writeMask = opacity == ShadowOpacity::Off ? MTLColorWriteMaskNone : MTLColorWriteMaskAll;
+        if (opacity == ShadowOpacity::Add)
+        {
+            color.blendingEnabled = YES;
+            color.sourceRGBBlendFactor = MTLBlendFactorOne;
+            color.destinationRGBBlendFactor = MTLBlendFactorOne;
+            color.sourceAlphaBlendFactor = MTLBlendFactorOne;
+            color.destinationAlphaBlendFactor = MTLBlendFactorOne;
+        }
         descriptor.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle; // the vertex picks the layer
         NSError* failure = nil;
         id<MTLRenderPipelineState> pipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
@@ -700,15 +714,19 @@ private:
         id<MTLFunction> maskedFragment = loadFunction(shaderDir, "asrShadowMaskedF", error);
         id<MTLFunction> shiftVertex = loadFunction(shaderDir, "asrShadowShiftV", error);
         id<MTLFunction> shiftFragment = loadFunction(shaderDir, "asrShadowShiftF", error);
-        if (!mShadowFitPipeline || !vertex || !maskedVertex || !maskedFragment || !shiftVertex || !shiftFragment)
+        id<MTLFunction> opacityFragment = loadFunction(shaderDir, "asrShadowOpacityF", error);
+        if (!mShadowFitPipeline || !vertex || !maskedVertex || !maskedFragment || !shiftVertex || !shiftFragment || !opacityFragment)
         {
             return false;
         }
-        mShadowPipeline = createShadowPipeline(vertex, nil, error);
-        mShadowMaskedPipeline = createShadowPipeline(maskedVertex, maskedFragment, error);
-        mShadowShiftPipeline = createShadowPipeline(shiftVertex, shiftFragment, error);
+        mShadowPipeline = createShadowPipeline(vertex, nil, ShadowOpacity::Off, error);
+        mShadowMaskedPipeline = createShadowPipeline(maskedVertex, maskedFragment, ShadowOpacity::Off, error);
+        mShadowOpacityPipeline = createShadowPipeline(maskedVertex, opacityFragment, ShadowOpacity::Add, error);
+        mShadowShiftPipeline = createShadowPipeline(shiftVertex, shiftFragment, ShadowOpacity::Write, error);
         MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
         depth.depthCompareFunction = MTLCompareFunctionGreater; // depth 1 lies towards the light
+        depth.depthWriteEnabled = NO;
+        mShadowOpacityDepthState = [mDevice newDepthStencilStateWithDescriptor:depth];
         depth.depthWriteEnabled = YES;
         mShadowDepthState = [mDevice newDepthStencilStateWithDescriptor:depth];
         depth.depthCompareFunction = MTLCompareFunctionAlways;
@@ -719,7 +737,7 @@ private:
         {
             spheres = createSceneBuffer(SHADOW_MAX_DIRTY * 16, MemoryCategory::Staging, "shadow dirty spheres", true);
         }
-        return mShadowPipeline && mShadowMaskedPipeline && mShadowShiftPipeline && mShadowViews && mShadowDirty[FRAMES_IN_FLIGHT - 1];
+        return mShadowPipeline && mShadowMaskedPipeline && mShadowOpacityPipeline && mShadowShiftPipeline && mShadowViews && mShadowDirty[FRAMES_IN_FLIGHT - 1];
     }
 
     // The working map and the static cache, mWantedShadowSize across; remade when that
@@ -730,13 +748,14 @@ private:
         {
             return true;
         }
-        const uint64_t bytes = uint64_t(mShadowSize) * mShadowSize * SHADOW_CASCADES * 2;
+        // Depth (2 bytes) and opacity (4 bytes), each working and cached.
+        const uint64_t bytes = uint64_t(mShadowSize) * mShadowSize * SHADOW_CASCADES * 2 * (2 + 4);
         if (mSunShadow)
         {
-            mMemoryBudget.release(MemoryCategory::Shadows, 2 * bytes);
+            mMemoryBudget.release(MemoryCategory::Shadows, bytes);
         }
         mShadowSize = mWantedShadowSize;
-        mMemoryBudget.reserveAnyway(MemoryCategory::Shadows, 2 * uint64_t(mShadowSize) * mShadowSize * SHADOW_CASCADES * 2);
+        mMemoryBudget.reserveAnyway(MemoryCategory::Shadows, uint64_t(mShadowSize) * mShadowSize * SHADOW_CASCADES * 2 * (2 + 4));
         MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth16Unorm
                                                                                               width:mShadowSize height:mShadowSize mipmapped:NO];
         descriptor.textureType = MTLTextureType2DArray;
@@ -746,8 +765,12 @@ private:
         mSunShadow = [mDevice newTextureWithDescriptor:descriptor];
         descriptor.usage = MTLTextureUsageShaderRead;
         mShadowCache = [mDevice newTextureWithDescriptor:descriptor];
+        descriptor.pixelFormat = MTLPixelFormatRG16Float;
+        mOpacityCache = [mDevice newTextureWithDescriptor:descriptor];
+        descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        mSunOpacity = [mDevice newTextureWithDescriptor:descriptor];
         mShadowReset = true;
-        if (!mSunShadow || !mShadowCache)
+        if (!mSunShadow || !mShadowCache || !mSunOpacity || !mOpacityCache)
         {
             mError = "cannot create the sun's shadow maps";
             return false;
@@ -1339,6 +1362,7 @@ private:
             [draw setFragmentTexture:mMacOIT.tailDepth atIndex:5];
             [draw setFragmentTexture:mSky.aerial atIndex:18];
             [draw setFragmentTexture:mSunShadow atIndex:20]; // asrShadow.glsl
+            [draw setFragmentTexture:mSunOpacity atIndex:22];
         }
         for (uint32_t kind = SCENE_BLENDED_KIND; kind < SCENE_KINDS; ++kind)
         {
@@ -2082,6 +2106,9 @@ private:
         pass.depthAttachment.texture = mSunShadow;
         pass.depthAttachment.loadAction = load ? MTLLoadActionLoad : MTLLoadActionDontCare;
         pass.depthAttachment.storeAction = MTLStoreActionStore;
+        pass.colorAttachments[0].texture = mSunOpacity;
+        pass.colorAttachments[0].loadAction = pass.depthAttachment.loadAction;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
         pass.renderTargetArrayLength = SHADOW_CASCADES;
         attachPassSamples(pass);
         id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
@@ -2102,6 +2129,7 @@ private:
         [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [draw setFragmentBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [draw setFragmentTexture:mShadowCache atIndex:21];
+        [draw setFragmentTexture:mOpacityCache atIndex:23];
         [draw drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3 instanceCount:SHADOW_CASCADES];
         [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
         [draw endEncoding];
@@ -2120,16 +2148,29 @@ private:
         [draw setDepthStencilState:mShadowDepthState];
         mScenePush.phase = phase;
         const uint64_t arguments = phase == SHADOW_DRAW_MOVING ? offsetof(GpuSceneCounts, shadowMoving) : offsetof(GpuSceneCounts, shadow);
-        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind) // blended kinds cast through their alpha
+        // Every kind's depth first, then the kinds with holes again into the opacity map, tested
+        // against all that depth (asrShadowAlpha.glsl). Blended kinds cast through their alpha.
+        for (uint32_t round = 0; round < 2; ++round)
         {
-            const bool solid = kind < SCENE_OPAQUE_KINDS && (kind & 2) == 0;
-            [draw setRenderPipelineState:solid ? mShadowPipeline : mShadowMaskedPipeline];
-            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            if (round == 1)
             {
-                mScenePush.list = sceneList(kind, bucket);
-                [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
-                [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts
-                  indirectBufferOffset:arguments + mScenePush.list * sizeof(GpuDrawArguments)];
+                [draw setDepthStencilState:mShadowOpacityDepthState];
+            }
+            for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
+            {
+                const bool solid = kind < SCENE_OPAQUE_KINDS && (kind & 2) == 0;
+                if (round == 1 && solid)
+                {
+                    continue;
+                }
+                [draw setRenderPipelineState:round == 1 ? mShadowOpacityPipeline : solid ? mShadowPipeline : mShadowMaskedPipeline];
+                for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+                {
+                    mScenePush.list = sceneList(kind, bucket);
+                    [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+                    [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts
+                      indirectBufferOffset:arguments + mScenePush.list * sizeof(GpuDrawArguments)];
+                }
             }
         }
         [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
@@ -2149,6 +2190,8 @@ private:
         // The dirty tiles are drawn: marks gathered until the next update start from none.
         [copy fillBuffer:mShadowViews range:NSMakeRange(offsetof(GpuShadowViews, dirty), sizeof(GpuShadowViews::dirty)) value:0];
         [copy copyFromTexture:mSunShadow sourceSlice:0 sourceLevel:0 toTexture:mShadowCache destinationSlice:0 destinationLevel:0
+                   sliceCount:SHADOW_CASCADES levelCount:1];
+        [copy copyFromTexture:mSunOpacity sourceSlice:0 sourceLevel:0 toTexture:mOpacityCache destinationSlice:0 destinationLevel:0
                    sliceCount:SHADOW_CASCADES levelCount:1];
         [copy updateFence:mSceneFence];
         [copy endEncoding];
@@ -2198,6 +2241,7 @@ private:
         [resolve setTexture:mDepthTarget atIndex:3]; // where the mask was written
         [resolve setTexture:mLitTarget atIndex:8];
         [resolve setTexture:mSunShadow atIndex:20]; // asrShadow.glsl
+        [resolve setTexture:mSunOpacity atIndex:22];
         bindSkyTables(resolve); // the background
         // Each kind writes only its own pixels, so the dispatches need nothing between them.
         for (uint32_t kind = 0; kind < RESOLVE_KINDS; ++kind)
@@ -3510,13 +3554,17 @@ private:
     id<MTLBuffer> mShadowDirty[FRAMES_IN_FLIGHT] = {};
     id<MTLTexture> mSunShadow = nil;   // the working map, a layer per cascade
     id<MTLTexture> mShadowCache = nil; // static casters alone, kept between frames
+    id<MTLTexture> mSunOpacity = nil;  // partly covering casters per cascade (asrShadowAlpha.glsl), drawn with the depth
+    id<MTLTexture> mOpacityCache = nil; // the same, static casters alone
     id<MTLComputePipelineState> mShadowFitPipeline = nil;
     id<MTLComputePipelineState> mShadowReceiversPipeline = nil;
     id<MTLComputePipelineState> mShadowDemandPipeline = nil;
     id<MTLRenderPipelineState> mShadowPipeline = nil;
     id<MTLRenderPipelineState> mShadowMaskedPipeline = nil;
+    id<MTLRenderPipelineState> mShadowOpacityPipeline = nil; // partly covering texels into the opacity map
     id<MTLRenderPipelineState> mShadowShiftPipeline = nil;
     id<MTLDepthStencilState> mShadowDepthState = nil;      // nearer the light wins
+    id<MTLDepthStencilState> mShadowOpacityDepthState = nil; // tested, not written
     id<MTLDepthStencilState> mShadowShiftDepthState = nil; // every texel written
     uint32_t mShadowSize = 0;
     uint32_t mWantedShadowSize = 1;

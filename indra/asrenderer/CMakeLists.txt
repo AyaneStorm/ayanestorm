@@ -101,7 +101,7 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
         asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
         asrSkyStarsV asrSkyStarsF asrSceneBloomC
-        asrShadowFitC asrShadowV asrShadowMaskedV asrShadowMaskedF asrShadowShiftV asrShadowShiftF asrShadowReceiversC asrShadowDemandC
+        asrShadowFitC asrShadowV asrShadowMaskedV asrShadowMaskedF asrShadowOpacityF asrShadowShiftV asrShadowShiftF asrShadowReceiversC asrShadowDemandC
         asrContactSetupC asrContactShadowsC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
@@ -148,6 +148,16 @@ endforeach()
 foreach(shader asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSkyStarsV)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSkyClouds.glsl)
+endforeach()
+# Sun and moon shadows: the resolve and Mac OIT's passes (through asrSceneMacOIT.glsl) read them.
+foreach(shader asrSceneResolveSkyC asrSceneResolveSurfaceC asrSceneResolveTerrainC asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrShadow.glsl)
+endforeach()
+# Shadow casters with holes: their depth and their opacity share one body.
+foreach(shader asrShadowMaskedF asrShadowOpacityF)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrShadowAlpha.glsl)
 endforeach()
 # Bloom's atlas layout and filtered reads.
 foreach(shader asrSceneBloomC asrSceneCompositeF)

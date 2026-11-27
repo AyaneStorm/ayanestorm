@@ -72,16 +72,6 @@ void main()
     const uint vertex = clusterIndex(cluster.indices, triangle * 3u + corner);
 #ifdef SHADOW
     gl_Position = shadowPosition(view, shadow.viewProjection, instance, packedPosition(cluster.positions, vertex));
-#ifdef MASKED
-    // An avatar's alpha casters (hair, lace) sit SHADOW_AVATAR_ALPHA_PUSH further from the light:
-    // strands thinner than a texel pulsed through the map as blotches on the skin under them
-    // (user's capture, 26 November 2026). Closer than that, the resolve's contact shadows
-    // draw them at screen resolution; farther (shoulders, the ground) the map still does.
-    if ((instance.flags & INSTANCE_SKINNED) != 0u)
-    {
-        gl_Position.z -= SHADOW_AVATAR_ALPHA_PUSH / shadow.depthRange * gl_Position.w;
-    }
-#endif
 #else
     gl_Position = scenePosition(view, instance, packedPosition(cluster.positions, vertex));
 #endif

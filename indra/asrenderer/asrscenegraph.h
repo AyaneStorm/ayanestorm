@@ -79,6 +79,8 @@ enum SceneResult : ResultId
     ResultShadowLists,   // the shadow views' clusters, tagged by view, then their group entries
     ResultSunShadow,     // the sun's or moon's cascades, a depth layer each
     ResultShadowCache,   // their static casters alone, kept between frames
+    ResultSunOpacity,    // partly covering casters per cascade, drawn with the depth (asrShadowAlpha.glsl)
+    ResultOpacityCache,  // their static ones alone, kept between frames
     ResultInstanceLods,  // each instance's LOD, kept to see it change
     ResultContactShadows, // the contact shadow pass's work list (asrContactShadows.glsl)
     ResultSunShadowMask, // contact shadows for the opaque pixels, read by the resolve

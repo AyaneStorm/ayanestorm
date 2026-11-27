@@ -77,16 +77,19 @@ constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour, pre-exposed; alpha is glow
 constexpr VkFormat SKY_TABLE_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT; // see createSky
 constexpr VkFormat SHADOW_FORMAT = VK_FORMAT_D16_UNORM; // sun and moon cascades: see asrscene.h
-constexpr uint32_t SCENE_IMAGE_BINDINGS = 22; // set 1, see createScene()
+constexpr VkFormat SHADOW_OPACITY_FORMAT = VK_FORMAT_R16G16_SFLOAT; // optical depth and its depth sum: asrShadowAlpha.glsl
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 24; // set 1, see createScene()
 constexpr uint32_t SCENE_BINDING_SUN_SHADOW = 20; // asrShadow.glsl's sunShadow
 constexpr uint32_t SCENE_BINDING_SHADOW_CACHE = 21; // asrShadowShiftF.glsl's shadowCache
+constexpr uint32_t SCENE_BINDING_SUN_OPACITY = 22; // asrShadow.glsl's sunOpacity
+constexpr uint32_t SCENE_BINDING_OPACITY_CACHE = 23; // asrShadowShiftF.glsl's opacityCache
 constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
-constexpr uint32_t SCENE_SAMPLED_BINDINGS = 7; // the depth, the sky's four tables, the sun's shadow and its cache
+constexpr uint32_t SCENE_SAMPLED_BINDINGS = 9; // the depth, the sky's four tables, the sun's shadow and opacity and their caches
 
-// Set 1's sampled images: the depth, the sky's tables, the sun's shadow and its cache. The rest are storage images.
+// Set 1's sampled images: the depth, the sky's tables, the sun's shadow and opacity and their caches. The rest are storage images.
 bool sceneBindingSampled(uint32_t binding)
 {
-    return binding == 3 || binding == SCENE_BINDING_SUN_SHADOW || binding == SCENE_BINDING_SHADOW_CACHE ||
+    return binding == 3 || (binding >= SCENE_BINDING_SUN_SHADOW && binding <= SCENE_BINDING_OPACITY_CACHE) ||
            (binding >= SKY_FIRST_SAMPLED_BINDING && binding < SKY_FIRST_SAMPLED_BINDING + 4);
 }
 
@@ -257,6 +260,10 @@ struct TargetImage
     VmaAllocation allocation = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     uint64_t bytes = 0;
+    // Made since the last barrier: the first one starts from no layout. A persistent image's
+    // first read (the shadow cache, before anything was stored) otherwise named a layout it
+    // was never moved to (validation, once at start).
+    mutable bool fresh = true;
 };
 
 struct Texture
@@ -1309,6 +1316,7 @@ private:
         bool depthEqualPasses = false; // as OpenGL's LEQUAL: at equal depth the later draw wins
         bool shadow = false;          // a shadow map: SHADOW_FORMAT, depth clamp, both sides; no fragment shader with a null name
         bool depthAlways = false;     // every fragment's depth is written, whatever was there
+        bool colorsOff = false;       // the targets are bound but not written (shadow depth with the opacity map)
     };
 
     VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, VkFormat colorFormat, bool depth, std::string& error)
@@ -1360,7 +1368,7 @@ private:
             std::vector<VkPipelineColorBlendAttachmentState> attachments(setup.colors.size());
             for (VkPipelineColorBlendAttachmentState& attachment : attachments)
             {
-                attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+                attachment.colorWriteMask = setup.colorsOff ? 0 : VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
                 if (setup.additive)
                 {
                     attachment.blendEnable = VK_TRUE;
@@ -1510,6 +1518,8 @@ private:
         mResultImages[ResultDepth] = &mDepthImage;
         mResultImages[ResultSunShadow] = &mSunShadow;
         mResultImages[ResultShadowCache] = &mShadowCache;
+        mResultImages[ResultSunOpacity] = &mSunOpacity;
+        mResultImages[ResultOpacityCache] = &mOpacityCache;
         mResultImages[ResultNormals] = &mNormalImage;
         mResultImages[ResultSunShadowMask] = &mContactMask;
         mResultImages[ResultLit] = &mLitImage;
@@ -1603,19 +1613,28 @@ private:
     // frames, and the pipelines. The maps are made with the scene targets: createSunShadow().
     bool createShadows(std::string& error)
     {
+        // Every shadow draw binds the opacity map beside the depth; only the opacity pipeline and the shift write it.
         RasterSetup setup;
+        setup.colors = { SHADOW_OPACITY_FORMAT };
+        setup.colorsOff = true;
         setup.depthTest = true;
         setup.depthWrite = true;
         setup.shadow = true;
         mShadowFitPipeline = createComputePipeline("asrShadowFitC", error);
         mShadowPipeline = mShadowFitPipeline ? createSceneRasterPipeline("asrShadowV", nullptr, setup, error) : VK_NULL_HANDLE;
         mShadowMaskedPipeline = mShadowPipeline ? createSceneRasterPipeline("asrShadowMaskedV", "asrShadowMaskedF", setup, error) : VK_NULL_HANDLE;
+        RasterSetup opacity = setup;
+        opacity.colorsOff = false;
+        opacity.depthWrite = false;
+        opacity.additive = true;
+        mShadowOpacityPipeline = mShadowMaskedPipeline ? createSceneRasterPipeline("asrShadowMaskedV", "asrShadowOpacityF", opacity, error) : VK_NULL_HANDLE;
         RasterSetup shift;
+        shift.colors = { SHADOW_OPACITY_FORMAT };
         shift.depthTest = true;
         shift.depthWrite = true;
         shift.shadow = true;
         shift.depthAlways = true; // every texel written, from the cache or empty
-        mShadowShiftPipeline = mShadowMaskedPipeline ? createSceneRasterPipeline("asrShadowShiftV", "asrShadowShiftF", shift, error) : VK_NULL_HANDLE;
+        mShadowShiftPipeline = mShadowOpacityPipeline ? createSceneRasterPipeline("asrShadowShiftV", "asrShadowShiftF", shift, error) : VK_NULL_HANDLE;
         mShadowReceiversPipeline = mShadowShiftPipeline ? createComputePipeline("asrShadowReceiversC", error) : VK_NULL_HANDLE;
         mShadowDemandPipeline = mShadowReceiversPipeline ? createComputePipeline("asrShadowDemandC", error) : VK_NULL_HANDLE;
         mContactSetupPipeline = mShadowDemandPipeline ? createComputePipeline("asrContactSetupC", error) : VK_NULL_HANDLE;
@@ -1644,8 +1663,12 @@ private:
     // cached in new maps: the fit redraws every cascade (mShadowReset).
     bool createSunShadow(uint32_t size)
     {
-        if (!createShadowArray(mSunShadow, size, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, "sun shadow") ||
-            !createShadowArray(mShadowCache, size, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "shadow cache"))
+        const VkImageUsageFlags read = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        const VkImageUsageFlags cache = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (!createShadowArray(mSunShadow, size, SHADOW_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | read, "sun shadow") ||
+            !createShadowArray(mShadowCache, size, SHADOW_FORMAT, cache, "shadow cache") ||
+            !createShadowArray(mSunOpacity, size, SHADOW_OPACITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | read, "sun opacity") ||
+            !createShadowArray(mOpacityCache, size, SHADOW_OPACITY_FORMAT, cache, "opacity cache"))
         {
             return false;
         }
@@ -1654,13 +1677,14 @@ private:
         return true;
     }
 
-    bool createShadowArray(TargetImage& target, uint32_t size, VkImageUsageFlags usage, const char* what)
+    bool createShadowArray(TargetImage& target, uint32_t size, VkFormat format, VkImageUsageFlags usage, const char* what)
     {
-        const uint64_t bytes = uint64_t(size) * size * SHADOW_CASCADES * 2;
+        const bool depth = format == SHADOW_FORMAT;
+        const uint64_t bytes = uint64_t(size) * size * SHADOW_CASCADES * (depth ? 2 : 4);
         mMemoryBudget.reserveAnyway(MemoryCategory::Shadows, bytes);
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         image.imageType = VK_IMAGE_TYPE_2D;
-        image.format = SHADOW_FORMAT;
+        image.format = format;
         image.extent = { size, size, 1 };
         image.mipLevels = 1;
         image.arrayLayers = SHADOW_CASCADES;
@@ -1679,8 +1703,8 @@ private:
         VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
         view.image = target.image;
         view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-        view.format = SHADOW_FORMAT;
-        view.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, SHADOW_CASCADES };
+        view.format = format;
+        view.subresourceRange = { VkImageAspectFlags(depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT), 0, 1, 0, SHADOW_CASCADES };
         return check(vkCreateImageView(mDevice, &view, nullptr, &target.view), what);
     }
 
@@ -1702,6 +1726,8 @@ private:
     {
         destroyShadowArray(mSunShadow);
         destroyShadowArray(mShadowCache);
+        destroyShadowArray(mSunOpacity);
+        destroyShadowArray(mOpacityCache);
         mSunShadowSize = 0;
     }
 
@@ -1716,15 +1742,15 @@ private:
         {
             destroyBuffer(spheres, MemoryCategory::Staging);
         }
-        for (VkPipeline pipeline : { mShadowFitPipeline, mShadowPipeline, mShadowMaskedPipeline, mShadowShiftPipeline, mShadowReceiversPipeline,
-                                     mShadowDemandPipeline, mContactSetupPipeline, mContactShadowsPipeline })
+        for (VkPipeline pipeline : { mShadowFitPipeline, mShadowPipeline, mShadowMaskedPipeline, mShadowOpacityPipeline, mShadowShiftPipeline,
+                                     mShadowReceiversPipeline, mShadowDemandPipeline, mContactSetupPipeline, mContactShadowsPipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
                 vkDestroyPipeline(mDevice, pipeline, nullptr);
             }
         }
-        mShadowFitPipeline = mShadowPipeline = mShadowMaskedPipeline = mShadowShiftPipeline = mShadowReceiversPipeline = VK_NULL_HANDLE;
+        mShadowFitPipeline = mShadowPipeline = mShadowMaskedPipeline = mShadowOpacityPipeline = mShadowShiftPipeline = mShadowReceiversPipeline = VK_NULL_HANDLE;
         mShadowDemandPipeline = mContactSetupPipeline = mContactShadowsPipeline = VK_NULL_HANDLE;
     }
 
@@ -1811,7 +1837,8 @@ private:
                                                           mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
-                                                          mBloomImage.view,       mSunShadow.view,        mShadowCache.view };
+                                                          mBloomImage.view,       mSunShadow.view,        mShadowCache.view,
+                                                          mSunOpacity.view,       mOpacityCache.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
         uint32_t count = 0;
@@ -3940,13 +3967,15 @@ private:
             }
             const VkImageAspectFlags aspect = target == &mDepthImage || target == &mUIDepth || target == &mSunShadow || target == &mShadowCache
                                             ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            const bool fresh = target->fresh;
+            target->fresh = false;
             VkImageMemoryBarrier2& barrier = images[imageCount++];
             barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
             barrier.srcStageMask = stagesOf(transition.source);
             barrier.srcAccessMask = writeAccessOf(transition.source);
             barrier.dstStageMask = stagesOf(transition.destination);
             barrier.dstAccessMask = accessOf(transition.destination);
-            barrier.oldLayout = transition.discard ? VK_IMAGE_LAYOUT_UNDEFINED : layoutOf(transition.previous, aspect);
+            barrier.oldLayout = transition.discard || fresh ? VK_IMAGE_LAYOUT_UNDEFINED : layoutOf(transition.previous, aspect);
             barrier.newLayout = layoutOf(transition.destination, aspect);
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -4325,9 +4354,16 @@ private:
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depth.loadOp = load ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingAttachmentInfo opacity{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        opacity.imageView = mSunOpacity.view;
+        opacity.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        opacity.loadOp = depth.loadOp;
+        opacity.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
         rendering.renderArea = { { 0, 0 }, { mSunShadowSize, mSunShadowSize } };
         rendering.layerCount = SHADOW_CASCADES;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &opacity;
         rendering.pDepthAttachment = &depth;
         vkCmdBeginRendering(commands, &rendering);
 
@@ -4365,6 +4401,9 @@ private:
         region.dstSubresource = region.srcSubresource;
         region.extent = { mSunShadowSize, mSunShadowSize, 1 };
         vkCmdCopyImage(mRecordCommands, mSunShadow.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mShadowCache.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        vkCmdCopyImage(mRecordCommands, mSunOpacity.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mOpacityCache.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
         return true;
     }
 
@@ -4381,15 +4420,24 @@ private:
         mScenePush.phase = phase;
         pushScene(commands);
         const uint64_t arguments = phase == SHADOW_DRAW_MOVING ? offsetof(GpuSceneCounts, shadowMoving) : offsetof(GpuSceneCounts, shadow);
-        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind) // blended kinds cast through their alpha
+        // Every kind's depth first, then the kinds with holes again into the opacity map, tested
+        // against all that depth (asrShadowAlpha.glsl). Blended kinds cast through their alpha.
+        for (uint32_t round = 0; round < 2; ++round)
         {
-            const bool solid = kind < SCENE_OPAQUE_KINDS && (kind & 2) == 0;
-            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, solid ? mShadowPipeline : mShadowMaskedPipeline);
-            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
             {
-                const uint32_t list = sceneList(kind, bucket);
-                vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, offsetof(ScenePush, list), sizeof(list), &list);
-                vkCmdDrawIndirect(commands, mSceneCounts.buffer, arguments + list * sizeof(GpuDrawArguments), 1, sizeof(GpuDrawArguments));
+                const bool solid = kind < SCENE_OPAQUE_KINDS && (kind & 2) == 0;
+                if (round == 1 && solid)
+                {
+                    continue;
+                }
+                vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, round == 1 ? mShadowOpacityPipeline : solid ? mShadowPipeline : mShadowMaskedPipeline);
+                for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+                {
+                    const uint32_t list = sceneList(kind, bucket);
+                    vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, offsetof(ScenePush, list), sizeof(list), &list);
+                    vkCmdDrawIndirect(commands, mSceneCounts.buffer, arguments + list * sizeof(GpuDrawArguments), 1, sizeof(GpuDrawArguments));
+                }
             }
         }
         vkCmdEndRendering(commands);
@@ -5187,6 +5235,8 @@ private:
     GpuBuffer mShadowViews;  // GpuShadowViews, written by the shadow fit pass
     TargetImage mSunShadow;  // a depth layer per cascade, mSunShadowSize across
     TargetImage mShadowCache; // the same, static casters alone, kept between frames
+    TargetImage mSunOpacity;   // partly covering casters per cascade (asrShadowAlpha.glsl), drawn with the depth
+    TargetImage mOpacityCache; // the same, static casters alone
     GpuBuffer mInstanceLods;  // GpuSceneView::instanceLods
     bool mLodReset = true;
     MappedBuffer mShadowDirty[FRAMES_IN_FLIGHT]; // GpuSceneView::shadowDirty, per slot
@@ -5209,6 +5259,7 @@ private:
     VkPipeline mShadowFitPipeline = VK_NULL_HANDLE;
     VkPipeline mShadowPipeline = VK_NULL_HANDLE;
     VkPipeline mShadowMaskedPipeline = VK_NULL_HANDLE;
+    VkPipeline mShadowOpacityPipeline = VK_NULL_HANDLE; // partly covering texels into the opacity map
     MappedBuffer mSceneCountsTemplate;
     MappedBuffer mSceneViews[FRAMES_IN_FLIGHT];
     MappedBuffer mSceneStaging[FRAMES_IN_FLIGHT];

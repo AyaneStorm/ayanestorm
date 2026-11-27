@@ -326,7 +326,6 @@ const uint SHADOW_TILES = 32u;
 const uint SHADOW_DEMAND_SLOTS = 65536u; // GpuShadowViews::demand
 const float SHADOW_FILTER_TEXELS = 24.0;  // asr_shadow_sun()'s widest search and filter radius, texels
 const float SHADOW_FILTER_MARGIN = SHADOW_FILTER_TEXELS + 3.0; // what a point's filter reads around it, texels
-const float SHADOW_AVATAR_ALPHA_PUSH = 0.06; // metres an avatar's alpha casters are drawn away from the light; contact shadows' reach
 const uint SHADOW_DRAW_STATIC = 0u;
 const uint SHADOW_DRAW_MOVING = 1u;
 layout(buffer_reference, std430) buffer ShadowViewsRef
