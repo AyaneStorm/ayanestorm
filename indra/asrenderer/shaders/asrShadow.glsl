@@ -18,7 +18,6 @@ const uint SHADOW_GATHER_SAMPLER = 0u; // UISampler::LinearClamp: gathers read w
 const float SHADOW_NORMAL_OFFSET = 1.5; // texels
 const float SHADOW_DEPTH_BIAS = 1.0;    // texels, as depth
 const float SHADOW_FADE = 0.1;          // the share of the reach over which shadows fade out
-const float SHADOW_BLEND = 0.08;        // the share of a cascade's width, at its edge, blended into the next
 // PCSS: an edge widens with its blocker's height above the receiver, as the sun's disc makes
 // it. The real sun (0.27 degrees, near enough the moon's too), not EEP's drawn size, which
 // can be many times larger. Blockers higher than SHADOW_PCSS_REACH widen it no more.
@@ -43,6 +42,77 @@ const float GOLDEN_ANGLE = 2.39996323;
 // 2026).
 uint gShadowPath = 0u; // debug view 11: the last cascade read's path, 0 the box, 1 the box with high blockers, 2 the disc
 
+// A coarser cascade's reads inside the next finer one's window come from that finer map, at the
+// same world points: moving casters wholly inside it are drawn there alone (the cull's
+// finestReader()), as an 80-avatar crowd drew 21 M of its 63 M shadow triangles into two
+// cascades (D1, 28 November 2026). Both share their axes, so a texel position maps by a scale
+// and an offset, and a depth by another. Off where a pixel inside the finer window lies past
+// its depth (GpuShadowViews::deep): it reads the coarser map there, with casters the finer
+// one clamped away.
+struct ShadowRedirect
+{
+    bool on;
+    float layer;      // the finer cascade
+    float scale;      // coarse texels to fine texels
+    vec2 from;        // the coarse window's offset, in clip units
+    vec2 to;          // the fine one's
+    float depthScale; // fine depth to coarse depth
+    float depthFrom;
+    float depthTo;
+};
+
+ShadowRedirect shadowRedirect(ShadowView shadow)
+{
+    ShadowRedirect r;
+    r.on = false;
+    ShadowViewsRef shadows = ShadowViewsRef(ViewRef(push.view).shadowViews);
+    const uint finer = shadow.layer - 1u;
+    if (shadow.layer == 0u || shadow.layer >= SHADOW_CASCADES || (shadows.deep & (1u << finer)) != 0u)
+    {
+        return r;
+    }
+    const ShadowView fine = shadows.views[finer];
+    r.on = true;
+    r.layer = float(finer);
+    r.scale = shadow.lightDirection.w / fine.lightDirection.w;
+    r.from = shadow.viewProjection[3].xy;
+    r.to = fine.viewProjection[3].xy;
+    r.depthScale = fine.depthRange / shadow.depthRange;
+    r.depthFrom = fine.viewProjection[3].z;
+    r.depthTo = shadow.viewProjection[3].z;
+    return r;
+}
+
+// A coarse texel position in the fine map's texels.
+vec2 shadowFinePlace(ShadowRedirect r, vec2 at, float resolution)
+{
+    return (((at / resolution * 2.0 - 1.0) - r.from) * r.scale + r.to) * 0.5 * resolution + 0.5 * resolution;
+}
+
+// textureGather of the coarse map at `corner` (between 4 texel centres), or the fine map's
+// depths at those 4 centres, as the coarse map's depth.
+vec4 shadowGather(ShadowRedirect r, vec2 corner, float layer, float resolution)
+{
+    if (r.on)
+    {
+        const vec2 fine = shadowFinePlace(r, corner, resolution);
+        const float halfTexel = 0.5 * r.scale;
+        if (all(greaterThanEqual(fine - halfTexel, vec2(0.0))) && all(lessThan(fine + halfTexel, vec2(resolution))))
+        {
+            const ivec2 low = ivec2(fine - halfTexel);
+            const ivec2 high = ivec2(fine + halfTexel);
+            const int l = int(r.layer);
+            const vec4 stored = vec4(texelFetch(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), ivec3(low.x, high.y, l), 0).r,
+                                     texelFetch(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), ivec3(high.x, high.y, l), 0).r,
+                                     texelFetch(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), ivec3(high.x, low.y, l), 0).r,
+                                     texelFetch(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), ivec3(low.x, low.y, l), 0).r);
+            // 0 is nothing cast, in both.
+            return mix(vec4(0.0), (stored - r.depthFrom) * r.depthScale + r.depthTo, greaterThan(stored, vec4(0.0)));
+        }
+    }
+    return textureGather(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), vec3(corner / resolution, layer));
+}
+
 float shadowCascade(ShadowView shadow, vec2 at, float depth, vec2 steepness, float resolution)
 {
     const float texel = shadow.lightDirection.w;
@@ -56,6 +126,7 @@ float shadowCascade(ShadowView shadow, vec2 at, float depth, vec2 steepness, flo
     // 2026); followed with its sign, a curved arm's plane broke its edges into texel blocks.
     const vec2 tolerance = abs(steepness) * depthPerTexel;
     const float layer = float(shadow.layer);
+    const ShadowRedirect redirect = shadowRedirect(shadow);
     const float search = clamp(SHADOW_PCSS_REACH * SHADOW_LIGHT_RADIUS / texel, SHADOW_BOX_RADIUS, SHADOW_FILTER_TEXELS);
     // Blockers lower than this above the receiver's plane give an edge no wider than the box:
     // they are the box's alone, and never pick the disc (a curved face's own cheek and nose).
@@ -85,7 +156,7 @@ float shadowCascade(ShadowView shadow, vec2 at, float depth, vec2 steepness, flo
             {
                 const vec2 corner = base + vec2(float(2 * x + 1), float(2 * y + 1));
                 const float plane = depth + dot(corner - at, slope);
-                const vec4 stored = textureGather(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), vec3(corner / resolution, layer));
+                const vec4 stored = shadowGather(redirect, corner, layer, resolution);
                 // Gather order: (low x, high y), (high x, high y), (high x, low y), (low x, low y).
                 const vec2 d = corner - at;
                 const vec4 allowed = abs(vec4(d.x - 0.5, d.x + 0.5, d.x + 0.5, d.x - 0.5)) * tolerance.x +
@@ -103,7 +174,7 @@ float shadowCascade(ShadowView shadow, vec2 at, float depth, vec2 steepness, flo
     {
         const vec2 tap = floor(at + vec2(float(k & 1) * 2.0 - 1.0, float((k >> 1) & 1) * 2.0 - 1.0) * (0.70710678 * search) - 0.5) + 1.0; // between 4 texel centres
         const float plane = depth + dot(tap - at, slope);
-        const vec4 stored = textureGather(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), vec3(tap / resolution, layer));
+        const vec4 stored = shadowGather(redirect, tap, layer, resolution);
         const vec4 high = step((vec4(plane + wide) + corners), stored);
         blockers += dot(high, vec4(1.0));
         blockerHeight += dot(high, stored - (vec4(plane) + corners));
@@ -129,7 +200,7 @@ float shadowCascade(ShadowView shadow, vec2 at, float depth, vec2 steepness, flo
     for (int k = 0; k < 16; ++k)
     {
         const vec2 tap = floor(at + direction * (radius * sqrt((float(k) + 0.5) / 16.0)) - 0.5) + 1.0; // between 4 texel centres
-        const vec4 stored = textureGather(sampler2DArray(sunShadow, samplers[SHADOW_GATHER_SAMPLER]), vec3(tap / resolution, layer));
+        const vec4 stored = shadowGather(redirect, tap, layer, resolution);
         disc += dot(step(stored, vec4(depth + dot(tap - at, slope)) + corners), vec4(0.25));
         direction = vec2(direction.x * golden.x - direction.y * golden.y, direction.x * golden.y + direction.y * golden.x);
     }
@@ -153,10 +224,22 @@ float shadowOpacity(ShadowView shadow, vec2 at, float depth, float resolution)
     const float height = centre.x > 0.0 ? max(centre.y / centre.x - depth, 0.0) * shadow.depthRange : 0.0;
     const float radius = clamp(height * SHADOW_LIGHT_RADIUS / shadow.lightDirection.w, 1.0, SHADOW_FILTER_TEXELS) * 0.7071;
     float optical = 0.0;
+    const ShadowRedirect redirect = shadowRedirect(shadow);
     for (uint i = 0u; i < 4u; ++i)
     {
         const vec2 offset = vec2((i & 1u) != 0u ? radius : -radius, (i & 2u) != 0u ? radius : -radius);
-        const vec2 tap = textureLod(sampler2DArray(sunOpacity, samplers[SHADOW_GATHER_SAMPLER]), vec3((at + offset) / resolution, layer), 0.0).rg;
+        vec2 tap;
+        const vec2 fine = redirect.on ? shadowFinePlace(redirect, at + offset, resolution) : vec2(-1.0);
+        if (redirect.on && all(greaterThanEqual(fine - redirect.scale, vec2(0.0))) && all(lessThan(fine + redirect.scale, vec2(resolution))))
+        {
+            // As shadowGather(): the finer map, its depth sum moved to this one's depth.
+            tap = textureLod(sampler2DArray(sunOpacity, samplers[SHADOW_GATHER_SAMPLER]), vec3(fine / resolution, redirect.layer), 0.0).rg;
+            tap.y = (tap.y - tap.x * redirect.depthFrom) * redirect.depthScale + tap.x * redirect.depthTo;
+        }
+        else
+        {
+            tap = textureLod(sampler2DArray(sunOpacity, samplers[SHADOW_GATHER_SAMPLER]), vec3((at + offset) / resolution, layer), 0.0).rg;
+        }
         const float tapMean = tap.x > 0.0 ? tap.y / tap.x : 0.0;
         optical += 0.25 * tap.x * clamp((tapMean - depth) / spread + 0.5, 0.0, 1.0);
     }

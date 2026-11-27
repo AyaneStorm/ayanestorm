@@ -19,12 +19,11 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(set = 1, binding = 3) uniform texture2D depthImage;
 
-// Texels around the point a lookup can read: the widest search or filter, and the normal
-// offset's 1.5. Near a cascade's edge asr_shadow_sun() reads the next one too (SHADOW_BLEND).
-const float RECEIVER_REACH = SHADOW_FILTER_MARGIN + 1.5;
-const float RECEIVER_BLEND = 0.08; // asrShadow.glsl's SHADOW_BLEND
+// Texels around the point a lookup can read: SHADOW_RECEIVER_REACH, the widest search or
+// filter and the normal offset. Near a cascade's edge asr_shadow_sun() reads the next one too (SHADOW_BLEND).
 
 shared uint sMask[SHADOW_CASCADES * SHADOW_TILES];
+shared uint sDeep; // GpuShadowViews::deep
 
 void main()
 {
@@ -33,6 +32,10 @@ void main()
     for (uint word = gl_LocalInvocationIndex; word < SHADOW_CASCADES * SHADOW_TILES; word += 256u)
     {
         sMask[word] = 0u;
+    }
+    if (gl_LocalInvocationIndex == 0u)
+    {
+        sDeep = 0u;
     }
     barrier();
 
@@ -57,11 +60,15 @@ void main()
             const vec2 inside = min(texel, vec2(size) - texel) - SHADOW_FILTER_MARGIN; // as shadowPlace()
             if (min(inside.x, inside.y) < 0.0 || clip.z < 0.0)
             {
+                if (min(inside.x, inside.y) >= 0.0)
+                {
+                    atomicOr(sDeep, 1u << i); // read from the next cascade inside this one's window: the cull keeps it there
+                }
                 continue;
             }
-            const uint columns = shadowTileBits(texel.x - RECEIVER_REACH, texel.x + RECEIVER_REACH, tile);
-            const int first = max(int(floor((texel.y - RECEIVER_REACH) / tile)), 0);
-            const int last = min(int(ceil((texel.y + RECEIVER_REACH) / tile)) - 1, int(SHADOW_TILES) - 1);
+            const uint columns = shadowTileBits(texel.x - SHADOW_RECEIVER_REACH, texel.x + SHADOW_RECEIVER_REACH, tile);
+            const int first = max(int(floor((texel.y - SHADOW_RECEIVER_REACH) / tile)), 0);
+            const int last = min(int(ceil((texel.y + SHADOW_RECEIVER_REACH) / tile)) - 1, int(SHADOW_TILES) - 1);
             for (int row = first; row <= last; ++row)
             {
                 atomicOr(sMask[i * SHADOW_TILES + uint(row)], columns);
@@ -70,7 +77,7 @@ void main()
             {
                 break; // the outer cascade of a blend
             }
-            blending = min(inside.x, inside.y) < RECEIVER_BLEND * size;
+            blending = min(inside.x, inside.y) < SHADOW_BLEND * size;
             if (!blending)
             {
                 break; // the finest cascade holding it is the one read
@@ -85,5 +92,9 @@ void main()
         {
             atomicOr(shadows.receivers[word], sMask[word]);
         }
+    }
+    if (gl_LocalInvocationIndex == 0u && sDeep != 0u)
+    {
+        atomicOr(shadows.deep, sDeep);
     }
 }

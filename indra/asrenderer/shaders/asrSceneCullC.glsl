@@ -75,6 +75,8 @@ layout(buffer_reference, std430) buffer CountsRef
     DrawArguments shadowMoving[LISTS];
     uint shadowUsed[LISTS];
     WorkCount shadowMovingGroups;
+    uint shadowViewTriangles[2][SHADOW_CASCADES]; // see drawShadow()
+    uint shadowRepeatTriangles[2];
 };
 
 const uint MACOIT_GATE = 6u;
@@ -493,8 +495,17 @@ void drawShadow(ViewRef view, Instance instance, uint instanceIndex, uint cluste
     for (uint bits = views; bits != 0u; bits &= bits - 1u)
     {
         const uint at = moving ? base + room - 1u - slot : base + slot;
-        lists.items[at] = ListEntry(instanceIndex | (uint(findLSB(bits)) << SHADOW_VIEW_SHIFT), clusterId);
+        const uint v = uint(findLSB(bits));
+        lists.items[at] = ListEntry(instanceIndex | (v << SHADOW_VIEW_SHIFT), clusterId);
         ++slot;
+        if (view.skinAudit != 0u && v < SHADOW_CASCADES) // --audit only: the counters contend
+        {
+            atomicAdd(counts.shadowViewTriangles[moving ? 1 : 0][v], triangles);
+        }
+    }
+    if (view.skinAudit != 0u && wanted > 1u)
+    {
+        atomicAdd(counts.shadowRepeatTriangles[moving ? 1 : 0], triangles * (wanted - 1u));
     }
     // Moving casters are culled after the final depth: skinned by SKIN_VERTICES_SHADOW
     // unless the main view already asked.
@@ -571,6 +582,38 @@ uint receiverViewsOf(ViewRef view, vec3 relative, float radius, uint candidates)
 
 // The views a bound passes: inside the box, then for a static caster on a dirty tile, for a
 // moving one on a receiver tile.
+// A moving cluster's cascades, `passed`, reduced to the finest that must hold it: a coarser
+// cascade reads inside a finer one's window from that finer map (shadowGather() in
+// asrShadow.glsl), so a cluster wholly inside cascade v's window, with a coarse texel to
+// spare, is drawn into v alone, for every coarser cascade that needed it too. An 80-avatar
+// crowd drew 27 M of its 69 M shadow triangles into two cascades (D1, 28 November 2026). Not
+// where a pixel inside cascade v lies past its depth (GpuShadowViews::deep): the coarser map
+// is read there as drawn. Clusters only: a group's views are its clusters' candidates.
+uint finestReader(ViewRef view, vec3 relative, float radius, uint passed)
+{
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    const float size = view.shadowResolution;
+    for (uint v = 0u; v + 1u < shadows.count && v + 1u < SHADOW_CASCADES; ++v)
+    {
+        if ((passed & ~((2u << v) - 1u)) == 0u)
+        {
+            break; // nothing coarser to fold in
+        }
+        if ((shadows.deep & (1u << v)) != 0u)
+        {
+            continue;
+        }
+        const vec2 at = ((shadows.views[v].viewProjection * vec4(relative, 1.0)).xy * 0.5 + 0.5) * size;
+        const float texel = shadows.views[v].lightDirection.w;
+        const vec2 inside = min(at, vec2(size) - at) - (radius + shadows.views[v + 1u].lightDirection.w) / texel;
+        if (min(inside.x, inside.y) >= 0.0)
+        {
+            return (passed & ((1u << v) - 1u)) | (1u << v);
+        }
+    }
+    return passed;
+}
+
 uint castingViewsOf(ViewRef view, bool moving, vec3 relative, float radius, uint candidates)
 {
     const uint inside = shadowViewsOf(view, relative, radius, candidates);
@@ -596,7 +639,9 @@ void castShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry g
     for (uint i = 0u; i < geometry.clusterCount; ++i)
     {
         const Cluster cluster = ClustersRef(push.clusters).items[geometry.firstCluster + i];
-        const uint passed = castingViewsOf(view, moving, transformPoint(instance.rows, cluster.center) - view.camera.xyz, cluster.radius * scaleBound, views);
+        const vec3 relative = transformPoint(instance.rows, cluster.center) - view.camera.xyz;
+        uint passed = castingViewsOf(view, moving, relative, cluster.radius * scaleBound, views);
+        passed = moving ? finestReader(view, relative, cluster.radius * scaleBound, passed) : passed;
         if (passed != 0u)
         {
             drawShadow(view, instance, instanceIndex, geometry.firstCluster + i, cluster.triangles, passed);
@@ -704,8 +749,9 @@ void cullShadowGroupClusters(ViewRef view)
     const Instance instance = InstancesRef(push.instances).items[entry.instance];
     const uint clusterId = group.firstCluster + lane;
     const Cluster cluster = ClustersRef(push.clusters).items[clusterId];
-    const uint passed = castingViewsOf(view, movingCaster(instance), transformPoint(instance.rows, cluster.center) - view.camera.xyz,
-                                       cluster.radius * scaleBoundOf(instance), entry.views);
+    const vec3 relative = transformPoint(instance.rows, cluster.center) - view.camera.xyz;
+    uint passed = castingViewsOf(view, movingCaster(instance), relative, cluster.radius * scaleBoundOf(instance), entry.views);
+    passed = moving ? finestReader(view, relative, cluster.radius * scaleBoundOf(instance), passed) : passed;
     if (passed != 0u)
     {
         drawShadow(view, instance, entry.instance, clusterId, cluster.triangles, passed);

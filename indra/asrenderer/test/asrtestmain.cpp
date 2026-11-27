@@ -3413,6 +3413,18 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
                stats.instances, stats.triangles / 1e6, (unsigned long long)stats.earlyClusters, (unsigned long long)stats.lateClusters,
                (unsigned long long)stats.shadowClusters, (unsigned long long)stats.shadowMovingClusters,
                (unsigned long long)stats.retestEntries, (unsigned long long)stats.groupEntries, stats.chunks, (unsigned long long)stats.pendingGeometries);
+        if (audit)
+        {
+            // D1 (shadows doc): how many caster triangles each cascade draws, and how many of
+            // them another cascade draws again.
+            for (uint32_t kind = 0; kind < 2; ++kind)
+            {
+                const auto& t = stats.shadowViewTriangles[kind];
+                printf("shadow %s triangles by cascade: %llu %llu %llu %llu, in a further cascade again: %llu\n", kind == 0 ? "static" : "moving",
+                       (unsigned long long)t[0], (unsigned long long)t[1], (unsigned long long)t[2], (unsigned long long)t[3],
+                       (unsigned long long)stats.shadowRepeatTriangles[kind]);
+            }
+        }
         if (stats.guardPixels != 0)
         {
             printf("resolve guards: bits %u, %llu pixels, largest bad value %u\n", stats.guardBits, (unsigned long long)stats.guardPixels, stats.guardValue);
@@ -3735,7 +3747,7 @@ int main(int argc, char** argv)
     }
 
 #ifdef ASR_HAS_DEVICE
-    if (vramStress) return asrtest::runVramStress(options, seconds, windowWidth, windowHeight, vramMode);
+    if (vramStress) return asrtest::runVramStress(options, seconds, windowWidth, windowHeight, vramMode, audit);
     if (encodeTest) return asrtest::runEncodeTest(options);
 #endif
     if (selftest)

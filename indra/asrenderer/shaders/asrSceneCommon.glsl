@@ -326,6 +326,8 @@ const uint SHADOW_TILES = 32u;
 const uint SHADOW_DEMAND_SLOTS = 65536u; // GpuShadowViews::demand
 const float SHADOW_FILTER_TEXELS = 24.0;  // asr_shadow_sun()'s widest search and filter radius, texels
 const float SHADOW_FILTER_MARGIN = SHADOW_FILTER_TEXELS + 3.0; // what a point's filter reads around it, texels
+const float SHADOW_BLEND = 0.08; // the share of a cascade's width, at its edge, blended into the next
+const float SHADOW_RECEIVER_REACH = SHADOW_FILTER_MARGIN + 1.5; // texels a lookup reads around its point, with the normal offset
 const uint SHADOW_DRAW_STATIC = 0u;
 const uint SHADOW_DRAW_MOVING = 1u;
 layout(buffer_reference, std430) buffer ShadowViewsRef
@@ -334,7 +336,7 @@ layout(buffer_reference, std430) buffer ShadowViewsRef
     uint count;
     uint light;
     uint keep;            // GpuShadowViews::keep: a bit per cascade whose demand bits stay
-    float pad;
+    uint deep;            // GpuShadowViews::deep: a bit per cascade some pixel in its window reads past its depth
     vec4 cachedLight;
     ShadowView views[MAX_SHADOW_VIEWS];
     uint dirty[MAX_SHADOW_VIEWS * SHADOW_TILES]; // [view * SHADOW_TILES + tile row], a bit per tile

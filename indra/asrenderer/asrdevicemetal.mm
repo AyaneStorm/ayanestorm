@@ -2458,6 +2458,14 @@ private:
                 mSceneFrameStats.shadowClusters += counts->shadow[list].instanceCount;
                 mSceneFrameStats.shadowMovingClusters += counts->shadowMoving[list].instanceCount;
             }
+            for (uint32_t kind = 0; kind < 2; ++kind)
+            {
+                for (uint32_t cascade = 0; cascade < SHADOW_CASCADES; ++cascade)
+                {
+                    mSceneFrameStats.shadowViewTriangles[kind][cascade] = counts->shadowViewTriangles[kind][cascade];
+                }
+                mSceneFrameStats.shadowRepeatTriangles[kind] = counts->shadowRepeatTriangles[kind];
+            }
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
             mSceneFrameStats.guardBits |= counts->guardBits;

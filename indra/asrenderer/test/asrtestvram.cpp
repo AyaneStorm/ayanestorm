@@ -41,7 +41,7 @@
 
 namespace asrtest
 {
-int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_t width, uint32_t height, VramTestMode mode)
+int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_t width, uint32_t height, VramTestMode mode, bool audit)
 {
     using Clock = std::chrono::steady_clock;
     constexpr uint64_t MB = 1024ull * 1024;
@@ -62,9 +62,17 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
            managed ? "charge queued work; admit smaller first images under pressure" : "unbounded residency reproduction");
     asr::SceneQueue& scene = device->scene();
     asr::TextureQueue& textures = device->textures();
-    std::vector<asr::SkinWeights> weights;
-    const Mesh mesh = makeTube(128, 128, weights);
-    const asr::GeometryData geometry = build(mesh, &CREATURE_BOX, weights.data());
+    // Each face as SL meshes come: 4 LODs, here 32 k, 8 k, 2 k and 512 triangles, finest last.
+    constexpr uint32_t LODS = 4;
+    constexpr float LOD_SWITCH[LODS] = { 0.f, 60.f, 30.f, 14.f }; // the ratio each finer LOD hands over at
+    std::vector<asr::GeometryData> lods;
+    for (uint32_t lod = 0; lod < LODS; ++lod)
+    {
+        std::vector<asr::SkinWeights> weights;
+        const uint32_t rings = 16u << lod; // 16, 32, 64, 128
+        const Mesh mesh = makeTube(rings, rings, weights);
+        lods.push_back(build(mesh, &CREATURE_BOX, weights.data()));
+    }
     const uint32_t skin = scene.addSkin(creatureSkin());
     std::vector<uint32_t> skeletons, materials;
     for (uint32_t avatar = 0; avatar < AVATARS; ++avatar)
@@ -74,7 +82,11 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
         for (uint32_t face = 0; face < FACES; ++face)
         {
             // Unique source storage, as different mesh outfits do not share geometry.
-            const uint32_t ownGeometry = scene.addGeometry(asr::GeometryData(geometry));
+            uint32_t ownGeometry = scene.addGeometry(asr::GeometryData(lods[0]));
+            for (uint32_t lod = 1; lod < LODS; ++lod)
+            {
+                ownGeometry = scene.addGeometry(asr::GeometryData(lods[lod]), ownGeometry, LOD_SWITCH[lod]);
+            }
             asr::MaterialDesc material;
             material.color[0] = 0.4f + float(avatar % 5) * 0.12f;
             const uint32_t id = scene.addMaterial(material);
@@ -124,6 +136,7 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
         input.seconds = float(elapsed(start));
         input.camera = &camera;
         input.ui = &ui;
+        input.audit = audit; // --audit: also counts shadow casters per cascade
         if (!device->renderFrame(input))
         {
             printf("FAIL render: %s\n", device->lastError().c_str());
@@ -151,6 +164,21 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
                (unsigned long long)stats.pendingGeometries);
         const asr::FrameParts parts = device->frameParts();
         printf("  last frame: GPU wait %.2f ms, record %.2f ms, present %.2f ms\n", parts.waitForGpu * 1000.0, parts.record * 1000.0, parts.present * 1000.0);
+        // Where the crowd's GPU time goes, and its shadow casters per cascade (--audit fills those).
+        for (uint32_t i = 0; i < stats.passCount; ++i)
+        {
+            if (stats.passes[i].milliseconds >= 0.3)
+            {
+                printf("  %-16s %6.2f ms\n", stats.passes[i].name, stats.passes[i].milliseconds);
+            }
+        }
+        for (uint32_t kind = 0; kind < 2; ++kind)
+        {
+            const auto& t = stats.shadowViewTriangles[kind];
+            printf("  shadow %s triangles by cascade: %llu %llu %llu %llu, in a further cascade again: %llu\n", kind == 0 ? "static" : "moving",
+                   (unsigned long long)t[0], (unsigned long long)t[1], (unsigned long long)t[2], (unsigned long long)t[3],
+                   (unsigned long long)stats.shadowRepeatTriangles[kind]);
+        }
     };
     // Drain the initial crowd before comparing any frame rates.
     uint64_t frames = 0;

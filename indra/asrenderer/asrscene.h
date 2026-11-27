@@ -571,8 +571,12 @@ struct GpuSceneCounts
     GpuDrawArguments shadowMoving[SCENE_LISTS]; // moving casters, from each shadow list's end backwards
     uint32_t shadowUsed[SCENE_LISTS]; // both together, checked against the list's room
     GpuWorkCount shadowMovingGroups;  // moving casters' groups, from the group entries' end backwards
+    // Shadow casters' triangles, static [0] and moving [1]: per cascade, and those drawn into
+    // more than one cascade, once per further cascade (asrenderer_test's shadow line).
+    uint32_t shadowViewTriangles[2][SHADOW_CASCADES];
+    uint32_t shadowRepeatTriangles[2];
 };
-static_assert(sizeof(GpuSceneCounts) == 2016, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 2056, "shaders read this layout");
 
 // One shadow view, written by the shadow fit pass. Positions are relative to the camera, as
 // scenePosition() places vertices, so a far region keeps its precision.
@@ -598,7 +602,7 @@ struct GpuShadowViews
     uint32_t count;    // views filled this frame, 0 with no light to cast
     uint32_t light;    // SHADOW_LIGHT_*
     uint32_t keep;     // a bit per cascade whose demand bits stay this frame: one drawn whole, or gone, starts again
-    float pad;
+    uint32_t deep;     // a bit per cascade some visible pixel inside its window lies past its depth: it reads the next one there
     float cachedLight[4]; // the light direction the cache was drawn for, stepped (ASRendererShadowSunStep)
     GpuShadowView views[MAX_SHADOW_VIEWS];
     uint32_t dirty[MAX_SHADOW_VIEWS][SHADOW_TILES]; // a word per tile row, a bit per tile: redraw this frame

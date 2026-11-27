@@ -167,6 +167,10 @@ struct SceneStats
     uint64_t lateClusters = 0;        // found by the second
     uint64_t shadowClusters = 0;      // static shadow list entries, redrawn into dirty tiles, every shadow view
     uint64_t shadowMovingClusters = 0; // moving ones, drawn every frame
+    // --audit only: shadow casters' triangles, static [0] and moving [1], per cascade, and
+    // those drawn into more than one cascade, once per further cascade (GpuSceneCounts).
+    uint64_t shadowViewTriangles[2][4] = {};
+    uint64_t shadowRepeatTriangles[2] = {};
     uint32_t movingInstances = 0;     // INSTANCE_MOVING: moved within SHADOW_SETTLE_FRAMES
     uint32_t skinnedBindings = 0;     // rigged faces on skeletons (attached ones are moving content too)
     uint64_t retestEntries = 0;       // what the first phase left for the second

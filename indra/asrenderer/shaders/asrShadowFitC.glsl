@@ -90,6 +90,10 @@ void main()
     {
         shadows.receivers[word] = 0u;
     }
+    if (gl_LocalInvocationID.x == 0u)
+    {
+        shadows.deep = 0u;
+    }
     if (view.shadowUpdate == 0u)
     {
         // Between updates (ASRendererShadowInterval) the windows stay where the maps were drawn,
