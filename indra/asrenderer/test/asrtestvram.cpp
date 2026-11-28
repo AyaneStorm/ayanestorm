@@ -41,7 +41,8 @@
 
 namespace asrtest
 {
-int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_t width, uint32_t height, VramTestMode mode, bool audit)
+int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_t width, uint32_t height, VramTestMode mode, bool audit,
+                  const std::string& screenshot)
 {
     using Clock = std::chrono::steady_clock;
     constexpr uint64_t MB = 1024ull * 1024;
@@ -100,6 +101,18 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
             scene.addInstance(instance);
         }
     }
+    if (!screenshot.empty())
+    {
+        // --screenshot: ground under the crowd, for its shadows to fall on (the sweep's own
+        // measurements run without it).
+        asr::InstanceDesc ground{};
+        ground.geometry = scene.addGeometry(build(makeBoxFace(2, 1.f)));
+        asr::MaterialDesc grey;
+        ground.material = scene.addMaterial(grey);
+        const float rows[12] = { 80.f, 0.f, 0.f, 0.f, 0.f, 80.f, 0.f, 8.f, 0.f, 0.f, 1.f, -0.5f };
+        memcpy(ground.objectToWorld, rows, sizeof(rows));
+        scene.addInstance(ground);
+    }
     const float eye[3] = { 0.f, -12.f, 7.f };
     const float target[3] = { 0.f, 12.f, 2.f };
     const float aspect = float(width) / height;
@@ -116,6 +129,7 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
     auto poseAt = start - std::chrono::seconds(1);
     const auto elapsed = [&](Clock::time_point from) { return std::chrono::duration<double>(Clock::now() - from).count(); };
     bool okay = true;
+    asr::FrameCapture* capture = nullptr;
     const auto frame = [&]()
     {
         if (!window.pumpEvents()) return false;
@@ -125,7 +139,7 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
             for (uint32_t avatar = 0; avatar < AVATARS; ++avatar)
             {
                 float rows[CREATURE_JOINTS * 12];
-                creaturePose(float(elapsed(start)), avatarX(avatar), avatarY(avatar), 0.f, float(avatar), rows);
+                creaturePose(screenshot.empty() ? float(elapsed(start)) : 0.f, avatarX(avatar), avatarY(avatar), 0.f, float(avatar), rows);
                 scene.poseSkeleton(skeletons[avatar], rows, CREATURE_JOINTS, poseAt);
             }
         }
@@ -137,6 +151,7 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
         input.camera = &camera;
         input.ui = &ui;
         input.audit = audit; // --audit: also counts shadow casters per cascade
+        input.capture = capture;
         if (!device->renderFrame(input))
         {
             printf("FAIL render: %s\n", device->lastError().c_str());
@@ -190,6 +205,19 @@ int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_
     } while (okay && elapsed(since) < 60.0 && (device->sceneStats().pendingGeometries != 0 || elapsed(since) < 5.0));
     report("crowd loaded", frames, elapsed(since));
     if (!okay || device->sceneStats().pendingGeometries != 0) return 1;
+    if (!screenshot.empty())
+    {
+        // --screenshot: the loaded crowd, posed at time 0 so runs compare.
+        asr::FrameCapture shot;
+        capture = &shot;
+        for (int tries = 0; okay && !shot.done && tries < 8; ++tries) okay = frame();
+        capture = nullptr;
+        if (!shot.done || !writePng(screenshot, shot.width, shot.height, shot.rgba))
+        {
+            printf("FAIL screenshot %s\n", screenshot.c_str());
+            return 1;
+        }
+    }
     frames = 0;
     since = Clock::now();
     while (okay && elapsed(since) < 5.0) { okay = frame(); ++frames; }

@@ -240,6 +240,7 @@ private:
         float center[3]{};
         float scale = 1.f;
         float radius = 0.f;      // in packed units
+        float triangleWidth = 0.f; // object units: GeometryData::triangleWidth
         uint32_t vertexCount = 0;
         uint32_t clusterCount = 0;
         bool skinned = false;    // has weights
@@ -330,6 +331,11 @@ private:
         float reachCenter = 0.f;
         float reachStretch = 0.f;
         float reach = 0.f;
+        // Shadow LOD (GpuBinding::twin): a skinned binding's shadow twin, made and removed
+        // with it, its storage only for the LODs below the finest.
+        uint32_t twin = 0;         // the main binding: its twin binding
+        uint32_t twinInstance = 0; // the main binding: the twin's instance, the store's own
+        uint32_t twinOf = 0;       // the twin: its main binding
     };
 
     struct MorphSet
@@ -424,7 +430,9 @@ private:
     void removeSkinIfUnused(uint32_t id, uint64_t frame);
 
     // Returns the binding, or 0 when the instance cannot be bound yet and draws nothing.
-    uint32_t bindSkinned(uint32_t instance, const InstanceDesc& desc);
+    uint32_t bindSkinned(uint32_t instance, const InstanceDesc& desc, bool twin = false);
+    void bindTwin(uint32_t main, const InstanceDesc& desc);
+    void writeTwinInstance(uint32_t main, const GpuInstance& instance);
     uint32_t bindAttached(uint32_t instance, const InstanceDesc& desc, const GpuInstance& placed);
     void unbind(uint32_t binding, uint64_t frame);
     uint32_t usePalette(uint32_t skeleton, uint32_t skin, uint32_t binding);

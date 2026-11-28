@@ -73,6 +73,7 @@ constexpr uint32_t INSTANCE_BLENDED = 32u;     // alpha blended: drawn by the tr
 constexpr uint32_t INSTANCE_HUD = 64u;         // a HUD object, in HUD space: only the HUD pass draws it
 constexpr uint32_t INSTANCE_MOVING = 1u << 18; // set by the store: its transform changed lately, so its shadow is not cached
 constexpr uint32_t INSTANCE_FACE_SELECTED = 1u << 19;  // a face the face tool selected: tinted
+constexpr uint32_t INSTANCE_SHADOW_TWIN = 1u << 24;    // set by the store: a skinned instance's coarser LOD, cast into the shadows only (GpuBinding::twin)
 // Outlined, in a colour of GpuSceneView::selectionColors (SELECTION_COLOR_*, 0: not outlined).
 constexpr uint32_t INSTANCE_OUTLINE_SHIFT = 20;
 constexpr uint32_t INSTANCE_OUTLINE_MASK = 15u << INSTANCE_OUTLINE_SHIFT;
@@ -390,9 +391,13 @@ struct GpuBinding
     float reach;          // skinned: how far its vertices can be from their joints, before joint stretch
     uint32_t firstClusterBlock; // in the cluster block table
     uint32_t skinDemand;  // GPU: first culling phase that admitted this binding this frame
-    uint32_t unused[2];   // to a multiple of 16, as std430 rounds a struct holding a vec4
+    // Shadow LOD: a skinned binding's shadow twin, a second binding of the same chain at the
+    // coarser LOD its cascade's texel needs, drawn into the shadows only (INSTANCE_SHADOW_TWIN).
+    uint32_t twin;        // the main binding: its twin, 0 for none
+    uint32_t twinOf;      // the twin: its main binding; 0 for every other binding
+    float lodWidth[4];    // skinned: each LOD's mean triangle width (GeometryData::triangleWidth) along the chain from source, 0 unknown
 };
-static_assert(sizeof(GpuBinding) == 112, "shaders read this layout");
+static_assert(sizeof(GpuBinding) == 128, "shaders read this layout");
 static_assert(offsetof(GpuBinding, skinDemand) == 100, "shader deformation demand offset");
 
 // System avatar morphs. A morph set is a mesh's base vertices and the sparse deltas of its
@@ -712,6 +717,7 @@ struct GeometryData
     float center[3] = { 0.f, 0.f, 0.f }; // packed = (object - center) / scale
     float scale = 1.f;
     float radius = 0.f;                  // in packed units, around the packed origin
+    float triangleWidth = 0.f;           // object units: the mean triangle's, as an equilateral one
 
     // Skinned: for each joint index some weight names, the sphere around the vertices it
     // moves, in object space. How far a skin can move them from that joint follows from it,
@@ -1229,6 +1235,7 @@ public:
     // Render thread.
     void take(SceneCommands& commands);
     uint32_t reserveGeometry(); // for the store's own geometries
+    uint32_t reserveInstance(); // for the store's own instances (shadow twins)
     void releaseGeometry(uint32_t id);
     void releaseInstance(uint32_t id);
     void releaseMaterial(uint32_t id);

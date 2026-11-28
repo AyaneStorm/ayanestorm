@@ -21,6 +21,7 @@ const uint INSTANCE_BLENDED = 32u;
 const uint INSTANCE_HUD = 64u;
 const uint INSTANCE_MOVING = 1u << 18;
 const uint INSTANCE_FACE_SELECTED = 1u << 19;
+const uint INSTANCE_SHADOW_TWIN = 1u << 24; // asrscene.h
 const uint INSTANCE_OUTLINE_SHIFT = 20u; // 4 bits, SELECTION_COLOR_*, 0: not outlined
 const uint INSTANCE_OUTLINE_MASK = 15u << INSTANCE_OUTLINE_SHIFT;
 const uint INSTANCE_SELECTION = INSTANCE_OUTLINE_MASK | INSTANCE_FACE_SELECTED;
@@ -102,7 +103,9 @@ struct Binding
     float reach;
     uint firstClusterBlock;
     uint skinDemand;
-    uint bindingUnused[2];
+    uint twin;   // GpuBinding::twin
+    uint twinOf; // GpuBinding::twinOf
+    vec4 lodWidth; // GpuBinding::lodWidth
 };
 
 struct Morph

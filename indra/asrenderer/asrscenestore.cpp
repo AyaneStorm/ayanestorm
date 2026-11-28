@@ -506,6 +506,7 @@ void SceneStore::applyGeometry(GeometryCommand& command)
     memcpy(geometry.center, command.data.center, sizeof(geometry.center));
     geometry.scale = command.data.scale;
     geometry.radius = command.data.radius;
+    geometry.triangleWidth = command.data.triangleWidth;
     geometry.vertexCount = command.data.vertexCount;
     geometry.clusterCount = uint32_t(command.data.clusters.size());
     geometry.groupCount = uint32_t(command.data.groups.size());
@@ -637,6 +638,10 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
                 if (kept != 0)
                 {
                     writeSkinnedBinding(kept, command.id, desc);
+                    if (mBindings[kept].twin != 0)
+                    {
+                        writeSkinnedBinding(mBindings[kept].twin, mBindings[kept].twinInstance, desc);
+                    }
                 }
                 instance.geometry = mBindings[binding].target;
                 instance.flags = INSTANCE_SKINNED | INSTANCE_BOUND | (desc.flags & INSTANCE_DESC_FLAGS);
@@ -721,6 +726,10 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
 
     writeEntry(SceneTable::Instances, command.id, &instance, sizeof(instance));
     mInstanceEnd = std::max(mInstanceEnd, command.id + 1);
+    if (current.binding != 0 && mBindings[current.binding].kind == BINDING_SKINNED)
+    {
+        writeTwinInstance(current.binding, instance);
+    }
 }
 
 void SceneStore::instanceSphere(const GpuInstance& instance, float sphere[4]) const
@@ -1479,10 +1488,52 @@ void SceneStore::writeSkinnedBinding(uint32_t id)
     entry.firstClusterBlock = binding.firstClusterBlock;
     entry.groupCapacity = binding.groupCapacity;
     entry.morph = binding.morph;
+    entry.twin = binding.twin;
+    entry.twinOf = binding.twinOf;
+    for (uint32_t at = binding.source, lod = 0; lod < MAX_LODS && at != 0; ++lod, at = mGeometries[at].coarser)
+    {
+        entry.lodWidth[lod] = mGeometries[at].triangleWidth;
+    }
     writeEntry(SceneTable::Bindings, id, &entry, sizeof(entry));
 }
 
-uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
+// The shadow twin of skinned binding `main`: a second binding of the same chain, on an
+// instance of the store's own, drawn into the shadows only at the coarser LOD its cascade's
+// texel needs (asrSceneSkinC.glsl's shadowLod()). None for a chain of one LOD.
+void SceneStore::bindTwin(uint32_t main, const InstanceDesc& desc)
+{
+    const uint32_t instance = mQueue->reserveInstance();
+    const uint32_t twin = bindSkinned(instance, desc, true);
+    if (twin == 0)
+    {
+        mRetired.push_back({ Retired::Type::InstanceId, instance, 0, 0, 0 });
+        return;
+    }
+    mBindings[main].twin = twin;
+    mBindings[main].twinInstance = instance;
+    mBindings[twin].twinOf = main;
+    writeSkinnedBinding(main);
+    writeSkinnedBinding(twin);
+    ensureTable(SceneTable::Instances, uint64_t(instance) + 1);
+    mInstanceEnd = std::max(mInstanceEnd, instance + 1);
+}
+
+// The twin's instance: the main one's, drawing the twin's own geometry, never outlined.
+void SceneStore::writeTwinInstance(uint32_t main, const GpuInstance& instance)
+{
+    const Binding& binding = mBindings[main];
+    if (binding.twin == 0)
+    {
+        return;
+    }
+    GpuInstance twin = instance;
+    twin.geometry = mBindings[binding.twin].target;
+    twin.binding = binding.twin;
+    twin.flags = (instance.flags & ~INSTANCE_SELECTION) | INSTANCE_SHADOW_TWIN;
+    writeEntry(SceneTable::Instances, binding.twinInstance, &twin, sizeof(twin));
+}
+
+uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc, bool twin)
 {
     if (desc.skeleton >= mSkeletons.size() || mSkeletons[desc.skeleton].jointCount == 0 || mSkeletons[desc.skeleton].removing ||
         desc.skin >= mSkins.size() || mSkins[desc.skin].joints.empty() || mSkins[desc.skin].removing)
@@ -1492,16 +1543,24 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
 
     // An unweighted/invalid coarse LOD must not reject valid weighted finer LODs.
     // The GPU walks the same chain, retaining only LODs this palette can skin.
+    // A shadow twin never draws the finest LOD it could skin (the main binding does), so it
+    // holds only what the coarser ones need.
     uint32_t vertices = 0;
     uint32_t groups = 0;
     uint32_t clusters = 0;
     uint32_t at = desc.geometry;
+    bool skipFinest = twin;
     for (uint32_t lod = 0; lod < MAX_LODS && at != 0; ++lod)
     {
         const Geometry& geometry = mGeometries[at];
         at = geometry.coarser;
         if (!geometry.skinned || geometry.skinJoints == 0 || geometry.skinJoints > mSkins[desc.skin].joints.size())
         {
+            continue;
+        }
+        if (skipFinest)
+        {
+            skipFinest = false;
             continue;
         }
         vertices = std::max(vertices, geometry.vertexCount);
@@ -1597,6 +1656,10 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
     binding.lodSize = desc.lodSize;
     widenReach(id);
     ++mSkinnedBindings;
+    if (!twin)
+    {
+        bindTwin(id, desc);
+    }
     return id;
 }
 
@@ -1670,6 +1733,18 @@ uint32_t SceneStore::bindAttached(uint32_t instance, const InstanceDesc& desc, c
 
 void SceneStore::unbind(uint32_t id, uint64_t frame)
 {
+    if (mBindings[id].twin != 0)
+    {
+        // Its shadow twin goes with it: the instance drawn empty, then its id freed.
+        const uint32_t twin = mBindings[id].twin;
+        const uint32_t instance = mBindings[id].twinInstance;
+        const GpuInstance none{};
+        writeEntry(SceneTable::Instances, instance, &none, sizeof(none));
+        mRetired.push_back({ Retired::Type::InstanceId, instance, 0, 0, frame + mFreeDelay });
+        mBindings[id].twin = 0;
+        mBindings[id].twinInstance = 0;
+        unbind(twin, frame);
+    }
     Binding& binding = mBindings[id];
     const GpuBinding empty{};
     writeEntry(SceneTable::Bindings, id, &empty, sizeof(empty));

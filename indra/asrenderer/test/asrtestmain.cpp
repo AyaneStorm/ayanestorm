@@ -145,8 +145,11 @@ void setSunElevation(float degrees)
     sSky.sunDirection[2] = std::sin(elevation);
 }
 
+} // namespace
+
 // A PNG with no compression (stored deflate blocks): no image library in the test, and
 // these are read once and deleted. RGB, rows top first, as FrameCapture gives them.
+// Shared with asrtestvram.cpp (asrtestvram.h).
 bool writePng(const std::string& path, uint32_t width, uint32_t height, const std::vector<uint8_t>& rgba)
 {
     uint32_t crcTable[256];
@@ -230,6 +233,9 @@ bool writePng(const std::string& path, uint32_t width, uint32_t height, const st
     const bool written = fwrite(out.data(), 1, out.size(), file) == out.size();
     return fclose(file) == 0 && written;
 }
+
+namespace
+{
 
 // --moon-maps: the viewer's moon (as_moon_albedo.png, as_moon_normal.png) as raw RGBA,
 // moon_albedo.rgba at 2048 x 1024 and moon_normal.rgba at 2048 x 1024 (heights in alpha), made into a sphere
@@ -3747,7 +3753,7 @@ int main(int argc, char** argv)
     }
 
 #ifdef ASR_HAS_DEVICE
-    if (vramStress) return asrtest::runVramStress(options, seconds, windowWidth, windowHeight, vramMode, audit);
+    if (vramStress) return asrtest::runVramStress(options, seconds, windowWidth, windowHeight, vramMode, audit, sScreenshot);
     if (encodeTest) return asrtest::runEncodeTest(options);
 #endif
     if (selftest)

@@ -180,6 +180,69 @@ uint chooseLod(ViewRef view, uint id, vec3 center, float size, uint paletteCount
     return chosen;
 }
 
+// Shadow LOD, for a shadow twin (GpuBinding::twinOf): the coarsest LOD whose triangles are no
+// wider than SHADOW_LOD_TEXELS texels of the finest cascade holding `center`, never finer than
+// the main binding's `mainChosen`, and never the chain's finest (the twin has no room for it,
+// and the main binding draws it). 0 when that is the main binding's own LOD (it casts
+// itself), or past the cascades. A triangle's width is the LOD's mean, measured when it was
+// built (an estimate from its bound and cluster count made a long limb's triangles look half
+// again too wide): a test crowd drew 41 M triangles into a 2.3 cm cascade at the camera's LOD (D1).
+// The cascades are last frame's: this pass runs before the fit; their sizes change only with
+// the reach, and they are placed here around this frame's camera.
+const float SHADOW_LOD_TEXELS = 2.0;
+uint shadowLod(ViewRef view, uint id, vec3 center, uint mainChosen, uint paletteCount, vec4 lodWidth)
+{
+    ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+    if (view.shadowCascades == 0u || shadows.count == 0u)
+    {
+        return 0u;
+    }
+    const vec3 relative = center - view.camera.xyz;
+    float texel = 0.0;
+    for (uint v = 0u; v < shadows.count && v < SHADOW_CASCADES && texel == 0.0; ++v)
+    {
+        const mat4 m = shadows.views[v].viewProjection;
+        const vec2 across = vec2(dot(relative, normalize(vec3(m[0].x, m[1].x, m[2].x))), dot(relative, normalize(vec3(m[0].y, m[1].y, m[2].y))));
+        const float radius = shadows.views[v].lightDirection.w * view.shadowResolution * 0.5;
+        texel = all(lessThan(abs(across), vec2(radius))) ? shadows.views[v].lightDirection.w : 0.0;
+    }
+    if (texel == 0.0)
+    {
+        return 0u;
+    }
+    GeometriesRef geometries = GeometriesRef(push.geometries);
+    uint finest = 0u;
+    uint chosen = 0u;
+    bool reached = mainChosen == 0u; // past the main binding's LOD: coarser ones may be taken
+    for (uint lod = 0u; lod < MAX_LODS && id != 0u; ++lod)
+    {
+        const Geometry geometry = geometries.items[id];
+        if (geometry.clusterCount != 0u && geometry.skinJoints != 0u && geometry.skinJoints <= paletteCount)
+        {
+            reached = reached || id == mainChosen;
+            if (finest == 0u)
+            {
+                finest = id;
+            }
+            else if (reached)
+            {
+                // The LOD's mean triangle width (GpuBinding::lodWidth); 0 is unknown, never fine enough.
+                const float width = lodWidth[lod];
+                if (width > 0.0 && width <= SHADOW_LOD_TEXELS * texel)
+                {
+                    chosen = id; // coarser and still fine enough; widths only grow from here
+                }
+                else if (chosen == 0u && mainChosen == 0u)
+                {
+                    chosen = id; // off screen, so no main LOD casts: the finest the twin holds
+                }
+            }
+        }
+        id = geometry.coarser;
+    }
+    return chosen == mainChosen ? 0u : chosen;
+}
+
 void bind(ViewRef view, uint id)
 {
     if (id >= view.bindingEnd)
@@ -222,7 +285,11 @@ void bind(ViewRef view, uint id)
     // deformed vertex per axis, so its sphere is the box's half diagonal. One that comes
     // into the view is skinned in that same frame.
     const bool seen = insideView(view, center, bindingBox(skeleton, binding) * 1.7321);
-    const uint chosen = seen ? chooseLod(view, binding.source, center, size, binding.matrix) : 0u;
+    const uint mainChosen = seen ? chooseLod(view, binding.source, center, size, binding.matrix) : 0u;
+    // A shadow twin shares its main binding's chain, size, palette and reach, so the main
+    // binding's choice is the same here as there: the twin takes the coarser shadow LOD, or
+    // nothing when that is the main one's. Off screen it may still cast into the view.
+    const uint chosen = binding.twinOf != 0u ? shadowLod(view, binding.source, center, mainChosen, binding.matrix, binding.lodWidth) : mainChosen;
     const Geometry lod = GeometriesRef(push.geometries).items[chosen];
     Geometry own;
     own.firstGroup = binding.targetEntry;

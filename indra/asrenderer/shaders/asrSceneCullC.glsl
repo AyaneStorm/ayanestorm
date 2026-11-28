@@ -702,6 +702,17 @@ void cullShadows(ViewRef view, Instance instance, uint instanceIndex, Geometry g
     {
         return;
     }
+    // A skinned instance whose shadow twin took a coarser LOD this frame casts through it
+    // (asrSceneSkinC.glsl's shadowLod()).
+    if ((instance.flags & INSTANCE_SKINNED) != 0u)
+    {
+        BindingsRef bindings = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]);
+        const uint twin = bindings.items[instance.binding].twin;
+        if (twin != 0u && bindings.items[twin].chosen != 0u)
+        {
+            return;
+        }
+    }
     ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
     const uint count = shadows.count;
     const vec3 offset = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) - view.camera.xyz;
@@ -774,6 +785,10 @@ void cullInstance(ViewRef view, uint instanceIndex)
     if (push.phase == CULL_EARLY)
     {
         cullShadows(view, instance, instanceIndex, geometry, scaleBound);
+    }
+    if ((instance.flags & INSTANCE_SHADOW_TWIN) != 0u)
+    {
+        return; // the shadows' alone
     }
 
     const vec3 center = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w);

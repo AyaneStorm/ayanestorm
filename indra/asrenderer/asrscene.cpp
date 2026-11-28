@@ -293,6 +293,18 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
     geometry.center[1] = center.y;
     geometry.center[2] = center.z;
     geometry.scale = scale;
+    // The mean triangle's width, as an equilateral triangle of the mean area: what a shadow
+    // texel must reach to show this LOD's detail (shadow LOD, asrSceneSkinC.glsl).
+    double area = 0.0;
+    for (uint32_t t = 0; t < triangleCount; ++t)
+    {
+        const Vec3 a = positionOf(vertices[indices[t * 3]]);
+        const Vec3 e1 = positionOf(vertices[indices[t * 3 + 1]]) - a;
+        const Vec3 e2 = positionOf(vertices[indices[t * 3 + 2]]) - a;
+        const Vec3 c{ e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x };
+        area += 0.5 * std::sqrt(double(c.x) * c.x + double(c.y) * c.y + double(c.z) * c.z);
+    }
+    geometry.triangleWidth = float(std::sqrt(4.0 * area / (std::sqrt(3.0) * triangleCount)));
     const auto packed = [&](uint32_t vertex) { return (positionOf(vertices[vertex]) - center) * (1.f / scale); };
 
     std::vector<uint16_t> ordered;
@@ -1097,6 +1109,18 @@ uint32_t SceneQueue::reserveGeometry()
         return id;
     }
     return mNextGeometry++;
+}
+
+uint32_t SceneQueue::reserveInstance()
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    if (!mFreeInstances.empty())
+    {
+        const uint32_t id = mFreeInstances.back();
+        mFreeInstances.pop_back();
+        return id;
+    }
+    return mNextInstance++;
 }
 
 uint32_t SceneQueue::takeId(std::vector<uint32_t>& free, uint32_t& next)
