@@ -3205,6 +3205,14 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street, sContactTest);
         city->skyView = sSkyView;
         city->calm = sCalm;
+        if (sContactTest)
+        {
+            float tubeSpot[3], cardSpot[3];
+            city->addShadowChecks(device->textures(), sSky.sunDirection, tubeSpot, cardSpot);
+            std::printf("shadow checks: tubes --camera %.2f %.2f %.2f %.2f %.2f %.2f, cards --camera %.2f %.2f %.2f %.2f %.2f %.2f\n",
+                        tubeSpot[0] + 0.01f, tubeSpot[1], tubeSpot[2] + 2.5f, tubeSpot[0], tubeSpot[1], tubeSpot[2],
+                        cardSpot[0] + 0.01f, cardSpot[1], cardSpot[2] + 3.5f, cardSpot[0], cardSpot[1], cardSpot[2]);
+        }
         city->fixedCamera = sFixedCamera;
         std::copy(sFixedCameraValues, sFixedCameraValues + 3, city->fixedEye);
         std::copy(sFixedCameraValues + 3, sFixedCameraValues + 6, city->fixedTarget);

@@ -1459,6 +1459,18 @@ void SceneStore::setResident(uint32_t skeletonId, bool resident, uint64_t frame)
     }
 }
 
+// A LOD's surface, from its mean triangle (GeometryData::triangleWidth): an SL low LOD
+// collapsed to a few slivers has far less than the chain's finest, and its mean triangle looks
+// fine enough for any cascade, so a shadow twin taking it cast next to nothing.
+namespace
+{
+constexpr float SHADOW_LOD_MIN_SURFACE = 0.5f; // of the finest skinnable LOD's
+double lodSurface(float triangleWidth, uint64_t triangles)
+{
+    return double(triangleWidth) * triangleWidth * 0.4330127 * double(triangles);
+}
+}
+
 void SceneStore::writeSkinnedBinding(uint32_t id)
 {
     const Binding& binding = mBindings[id];
@@ -1490,9 +1502,15 @@ void SceneStore::writeSkinnedBinding(uint32_t id)
     entry.morph = binding.morph;
     entry.twin = binding.twin;
     entry.twinOf = binding.twinOf;
+    // A collapsed LOD (lodSurface()) goes as -1: shadowLod() never takes it.
+    double finestSurface = 0.0;
     for (uint32_t at = binding.source, lod = 0; lod < MAX_LODS && at != 0; ++lod, at = mGeometries[at].coarser)
     {
-        entry.lodWidth[lod] = mGeometries[at].triangleWidth;
+        const Geometry& geometry = mGeometries[at];
+        const double surface = lodSurface(geometry.triangleWidth, geometry.triangles);
+        const bool skinnable = geometry.skinned && geometry.skinJoints != 0 && geometry.skinJoints <= entry.matrix;
+        finestSurface = finestSurface == 0.0 && skinnable ? surface : finestSurface;
+        entry.lodWidth[lod] = surface < SHADOW_LOD_MIN_SURFACE * finestSurface ? -1.f : geometry.triangleWidth;
     }
     writeEntry(SceneTable::Bindings, id, &entry, sizeof(entry));
 }
@@ -1549,7 +1567,10 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc, bo
     uint32_t groups = 0;
     uint32_t clusters = 0;
     uint32_t at = desc.geometry;
+    // Nor a collapsed one (lodSurface()): with none left, there is no twin and the main binding
+    // casts its own shadow, off screen too (asrSceneSkinC.glsl's bind()).
     bool skipFinest = twin;
+    double finestSurface = 0.0;
     for (uint32_t lod = 0; lod < MAX_LODS && at != 0; ++lod)
     {
         const Geometry& geometry = mGeometries[at];
@@ -1561,6 +1582,11 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc, bo
         if (skipFinest)
         {
             skipFinest = false;
+            finestSurface = lodSurface(geometry.triangleWidth, geometry.triangles);
+            continue;
+        }
+        if (twin && lodSurface(geometry.triangleWidth, geometry.triangles) < SHADOW_LOD_MIN_SURFACE * finestSurface)
+        {
             continue;
         }
         vertices = std::max(vertices, geometry.vertexCount);

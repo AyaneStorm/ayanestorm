@@ -226,13 +226,14 @@ uint shadowLod(ViewRef view, uint id, vec3 center, uint mainChosen, uint palette
             }
             else if (reached)
             {
-                // The LOD's mean triangle width (GpuBinding::lodWidth); 0 is unknown, never fine enough.
+                // The LOD's mean triangle width (GpuBinding::lodWidth); 0 is unknown, never fine
+                // enough; negative is collapsed, never taken.
                 const float width = lodWidth[lod];
                 if (width > 0.0 && width <= SHADOW_LOD_TEXELS * texel)
                 {
                     chosen = id; // coarser and still fine enough; widths only grow from here
                 }
-                else if (chosen == 0u && mainChosen == 0u)
+                else if (chosen == 0u && mainChosen == 0u && width >= 0.0)
                 {
                     chosen = id; // off screen, so no main LOD casts: the finest the twin holds
                 }
@@ -285,7 +286,10 @@ void bind(ViewRef view, uint id)
     // deformed vertex per axis, so its sphere is the box's half diagonal. One that comes
     // into the view is skinned in that same frame.
     const bool seen = insideView(view, center, bindingBox(skeleton, binding) * 1.7321);
-    const uint mainChosen = seen ? chooseLod(view, binding.source, center, size, binding.matrix) : 0u;
+    // Without a twin (a chain with no coarser LOD to skin), the binding is its own shadow:
+    // off screen it keeps a LOD, so the shadow cull can still admit it (only then is it skinned).
+    const bool ownShadow = binding.twin == 0u && binding.twinOf == 0u;
+    const uint mainChosen = seen || ownShadow ? chooseLod(view, binding.source, center, size, binding.matrix) : 0u;
     // A shadow twin shares its main binding's chain, size, palette and reach, so the main
     // binding's choice is the same here as there: the twin takes the coarser shadow LOD, or
     // nothing when that is the main one's. Off screen it may still cast into the view.

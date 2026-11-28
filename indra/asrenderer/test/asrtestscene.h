@@ -404,7 +404,7 @@ public:
                     place(mBoxFaces[face], material, x, y, z, sx, sy, sz, false);
                 }
             };
-            box(mMaterials[0], 0.f, 0.f, top - 0.1f, 3.f, 3.f, 0.2f);
+            box(mMaterials[0], 0.f, 0.f, top - 0.1f, 30.f, 30.f, 0.2f); // room for addShadowChecks()
             box(mMaterials[1], 0.f, 0.f, top + 0.25f, 0.02f, 0.02f, 0.5f);
             box(mMaterials[1], 0.3f, 0.f, top + 0.015f, 0.03f, 0.03f, 0.03f);
             box(mMaterials[1], -0.3f, 0.2f, top + 0.005f, 0.4f, 0.3f, 0.01f);
@@ -604,8 +604,90 @@ public:
     // the renderer's, not the stress the scene puts on it.
     bool calm = false;
 
+    // --contact-test, beside its platform's small things, for the doc's shadow checks
+    // (ayanestorm-otherviewer-shadow-comparison-2026-11-28.md section 15), lit by `sun`:
+    // - tubes 6 m up-sun of `tubeSpot`, outside a camera looking straight down on it, whose
+    //   shadows cross it: one LOD only, a coarse LOD collapsed to 8 triangles, and two LODs.
+    // - at `cardSpot`, 0.5 m up: a 50% blended card, with a box on its side edge that
+    //   comes and goes every half second (dirty tiles next to clean ones), and two masked
+    //   cards of colour alpha 0.6: cutoff 0.7 (shown nowhere, no shadow) and 0.3 (solid).
+    void addShadowChecks(asr::TextureQueue& textures, const float sun[3], float tubeSpot[3], float cardSpot[3])
+    {
+        const float top = 200.1f;
+        const float flatLength = std::max(std::sqrt(sun[0] * sun[0] + sun[1] * sun[1]), 1e-6f);
+        const float f[2] = { sun[0] / flatLength, sun[1] / flatLength };
+        const float s[2] = { -f[1], f[0] };
+        tubeSpot[0] = s[0] * 6.f; tubeSpot[1] = s[1] * 6.f; tubeSpot[2] = top;
+        cardSpot[0] = -s[0] * 6.f; cardSpot[1] = -s[1] * 6.f; cardSpot[2] = top;
+
+        std::vector<asr::SkinWeights> weights;
+        const Mesh fine = makeTube(64, 24, weights);
+        Mesh collapsed = fine;
+        collapsed.indices.resize(24);
+        const uint32_t single = mScene.addGeometry(build(fine, &CREATURE_BOX, weights.data()));
+        const uint32_t collapsedId = mScene.addGeometry(build(collapsed, &CREATURE_BOX, weights.data()));
+        const uint32_t withCollapsed = mScene.addGeometry(build(fine, &CREATURE_BOX, weights.data()), collapsedId, 30.f);
+        const uint32_t tubes[3] = { single, withCollapsed, mTube };
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            const float side = (float(i) - 1.f) * 1.2f;
+            Creature creature;
+            creature.material = mMaterials[1];
+            creature.skeleton = mScene.addSkeleton(CREATURE_JOINTS);
+            float rows[CREATURE_JOINTS * 12];
+            creaturePose(0.f, tubeSpot[0] + f[0] * 6.f + s[0] * side, tubeSpot[1] + f[1] * 6.f + s[1] * side, 0.f, 0.f, rows);
+            for (uint32_t joint = 0; joint < CREATURE_JOINTS; ++joint)
+            {
+                rows[joint * 12 + 11] += top;
+            }
+            mScene.poseSkeleton(creature.skeleton, rows, CREATURE_JOINTS, std::chrono::steady_clock::now());
+            asr::InstanceDesc desc = tubeDesc(creature);
+            desc.geometry = tubes[i];
+            mScene.addInstance(desc);
+        }
+
+        asr::MaterialDesc white;
+        white.texture = checker(textures, 0, 64, 0xFFFFFFFFu);
+        white.color[3] = 0.5f;
+        const uint32_t half = mScene.addMaterial(white);
+        white.color[3] = 0.6f;
+        white.alphaCutoff = 0.7f;
+        const uint32_t hidden = mScene.addMaterial(white);
+        white.alphaCutoff = 0.3f;
+        const uint32_t solid = mScene.addMaterial(white);
+        // Up-sun of the spot by the cards' height over the sun's tangent, so their shadows land on it.
+        const float lift = 0.5f;
+        const float back = lift * flatLength / std::max(sun[2], 1e-3f);
+        const float cx = cardSpot[0] + f[0] * back, cy = cardSpot[1] + f[1] * back;
+        place(mBoxFaces[4], half, cx, cy, top + lift, 2.f, 2.f, 1.f, false, asr::INSTANCE_DOUBLE_SIDED | asr::INSTANCE_BLENDED);
+        place(mBoxFaces[4], hidden, cx + s[0] * 1.8f, cy + s[1] * 1.8f, top + lift, 0.8f, 0.8f, 1.f, false, asr::INSTANCE_DOUBLE_SIDED | asr::INSTANCE_MASKED);
+        place(mBoxFaces[4], solid, cx - s[0] * 1.8f, cy - s[1] * 1.8f, top + lift, 0.8f, 0.8f, 1.f, false, asr::INSTANCE_DOUBLE_SIDED | asr::INSTANCE_MASKED);
+        // On the card's own edge, so the tiles it dirties hold part of the card in any sun.
+        mShadowBox[0] = cx + s[0] * 0.85f;
+        mShadowBox[1] = cy + s[1] * 0.85f;
+        mShadowBox[2] = top + lift + 0.15f;
+        mShadowBoxOn = false;
+        mShadowBoxAt = -1.f;
+    }
+
     void update(float seconds)
     {
+        if (mShadowBox[2] != 0.f && seconds - mShadowBoxAt >= 0.5f)
+        {
+            mShadowBoxAt = seconds;
+            mShadowBoxOn = !mShadowBoxOn;
+            for (uint32_t face = 0; face < 6; ++face)
+            {
+                if (mShadowBoxOn)
+                {
+                    mShadowBoxFaces[face] = place(mBoxFaces[face], mMaterials[1], mShadowBox[0], mShadowBox[1], mShadowBox[2], 0.3f, 0.3f, 0.3f, false);
+                }
+                else
+                {
+                    mScene.removeInstance(mShadowBoxFaces[face]);
+                }
+            }
+        }
         if (calm)
         {
             if (seconds - mLastMove >= 1.f / 45.f)
@@ -1041,6 +1123,10 @@ private:
     uint32_t mMoved = 0;
     uint32_t mReplaced = 0;
     float mLastMove = 0.f;
+    float mShadowBox[3]{};         // addShadowChecks(): the box that comes and goes, z 0 without it
+    uint32_t mShadowBoxFaces[6]{};
+    bool mShadowBoxOn = false;
+    float mShadowBoxAt = 0.f;
     float mLastSwap = 0.f;
     uint32_t mTube = 0;
     uint32_t mSkin = 0;

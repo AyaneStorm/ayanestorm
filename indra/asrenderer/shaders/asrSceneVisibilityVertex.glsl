@@ -84,8 +84,18 @@ void main()
     vary_texture = material.texture;
     vary_alpha = vec2(material.color.a, material.alphaCutoff);
 #ifdef SHADOW
-    // shadowAlphaMaskF.glsl: a fullbright face's colour alpha does not thin its shadow.
-    vary_alpha.x = (material.flags & MATERIAL_FLAG_FULLBRIGHT) != 0u ? 1.0 : vary_alpha.x;
+    if ((instance.flags & INSTANCE_BLENDED) != 0u)
+    {
+        // asrShadowAlpha.glsl: a fullbright face's colour alpha does not thin its shadow.
+        vary_alpha.x = (material.flags & MATERIAL_FLAG_FULLBRIGHT) != 0u ? 1.0 : vary_alpha.x;
+        vary_alpha.y = -1.0; // blended: no cutoff
+    }
+    else
+    {
+        // Masked, as asrSceneMaskedF.glsl shows it: a texel is there, fully opaque, where its
+        // texture alpha reaches cutoff / colour alpha. Above 1 nothing is shown.
+        vary_alpha = vec2(1.0, material.alphaCutoff / max(material.color.a, 1e-6));
+    }
 #endif
 #endif
 }

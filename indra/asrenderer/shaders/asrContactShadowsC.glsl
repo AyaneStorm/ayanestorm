@@ -112,10 +112,22 @@ void main()
     const vec3 relative = eye.x * view.viewRows[0].xyz + eye.y * view.viewRows[1].xyz + eye.z * view.viewRows[2].xyz;
     ExposureRef e = ExposureRef(view.exposure);
     const vec3 toLight = work.light == SHADOW_LIGHT_SUN ? e.sunDirection : e.moonDirection;
-    // The finest cascade's bias, as the resolve moves a receiver (SHADOW_NORMAL_OFFSET texels
-    // along its normal, SHADOW_DEPTH_BIAS in depth), and a texel more for its filter.
+    // The bias of the cascade the resolve reads here (asr_shadow_sun(): the first holding the
+    // point, and in its edge band the next one too), as it moves a receiver (SHADOW_NORMAL_OFFSET
+    // texels along its normal, SHADOW_DEPTH_BIAS in depth), and a texel more for its filter.
     ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
-    const float texel = shadows.count != 0u ? shadows.views[0].lightDirection.w : CONTACT_REACH_MAX / CONTACT_BIAS_TEXELS;
+    float texel = CONTACT_REACH_MAX / CONTACT_BIAS_TEXELS;
+    for (uint i = 0u; i < shadows.count; ++i)
+    {
+        const vec4 clip = shadows.views[i].viewProjection * vec4(relative, 1.0);
+        const float edge = 1.0 - max(abs(clip.x), abs(clip.y)); // share of the half width left
+        if (edge >= 0.0 && clip.z >= 0.0)
+        {
+            const bool blended = edge * 0.5 < SHADOW_BLEND && i + 1u < shadows.count;
+            texel = shadows.views[blended ? i + 1u : i].lightDirection.w;
+            break;
+        }
+    }
     float reach = min(CONTACT_BIAS_TEXELS * texel, CONTACT_REACH_MAX);
     const float endAlong = here - reach * dot(toLight, view.viewRows[2].xyz);
     // A ray towards the camera stops halfway to it.

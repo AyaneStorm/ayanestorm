@@ -39,6 +39,20 @@ const float SHADOW_OPTICAL_MAX = 8.0;       // a fully covered texel's optical d
 
 void main()
 {
+#ifdef OPACITY
+    if (push.phase == SHADOW_DRAW_STATIC)
+    {
+        // Optical depth adds up, so a static caster reaching from a dirty tile into a clean one
+        // must not add itself again over what the cache kept there (depth is idempotent).
+        ViewRef view = ViewRef(push.view);
+        ShadowViewsRef shadows = ShadowViewsRef(view.shadowViews);
+        const uvec2 tile = uvec2(gl_FragCoord.xy * (float(SHADOW_TILES) / view.shadowResolution));
+        if ((shadows.dirty[vary_layer * SHADOW_TILES + tile.y] & (1u << tile.x)) == 0u)
+        {
+            discard;
+        }
+    }
+#endif
     const uint slot = vary_texture & 0xFFFFFu;
     const uint sampler_index = (vary_texture >> 28) & 3u;
     const vec2 uvDx = dFdx(vary_uv);
@@ -61,9 +75,16 @@ void main()
     }
 #endif
 
-    // Masked and blended alike: a masked texture's alpha is near 0 or 1 per texel, so its
-    // filtered alpha is the share of solid texels the shadow texel covers.
-    coverage *= vary_alpha.x;
+    // Blended: the filtered alpha times the colour's. Masked (vary_alpha.y, the texture alpha
+    // a shown texel reaches): its alpha is near 0 or 1 per texel, so the filtered alpha is the
+    // share of shown texels the shadow texel covers; none past 1, all at 0. A texture of even
+    // partial alpha is still read as that share.
+    const float threshold = vary_alpha.y;
+    if (threshold > 1.0)
+    {
+        discard;
+    }
+    coverage = threshold < 0.0 ? coverage * vary_alpha.x : threshold == 0.0 ? 1.0 : coverage;
 #ifdef OPACITY
     if (coverage >= SHADOW_ALPHA_SOLID || coverage < SHADOW_ALPHA_FAINT)
     {

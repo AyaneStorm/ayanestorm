@@ -2167,7 +2167,9 @@ private:
                 for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
                 {
                     mScenePush.list = sceneList(kind, bucket);
+                    // The fragment stages read it too: texture demand, the static opacity dirty-tile gate.
                     [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+                    [draw setFragmentBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
                     [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts
                       indirectBufferOffset:arguments + mScenePush.list * sizeof(GpuDrawArguments)];
                 }
